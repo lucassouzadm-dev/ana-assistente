@@ -43,14 +43,42 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   // Find or create contact — robust match handling:
   //   - BR mobile with/without 9 prefix
   //   - phone stored with formatting (parens, spaces, dashes)
-  // Strategy: fetch all active contacts with a phone, compare digits via phonesMatch.
+  //   - DUPLICATES: same phone may exist on multiple contacts; prefer the one
+  //     that owns the most recently active conversation, otherwise the most
+  //     recently updated contact.
   const { data: candidatesList } = await supabase
     .from('contacts')
     .select('*')
     .not('phone', 'is', null)
     .eq('is_active', true)
-  let contact = (candidatesList || []).find((c) => phonesMatch(c.phone, parsed.from)) || null
-  console.log('[WH] contact lookup:', contact?.id || 'NOT FOUND', 'from:', parsed.from, 'candidates scanned:', candidatesList?.length || 0)
+  const matchingContacts = (candidatesList || []).filter((c) => phonesMatch(c.phone, parsed.from))
+
+  let contact = null as null | typeof matchingContacts[number]
+  type ConversationRow = { id: string; contact_id: string; channel: string; status: string; [k: string]: unknown }
+  let conversation = null as ConversationRow | null
+
+  if (matchingContacts.length > 0) {
+    const ids = matchingContacts.map((c) => c.id)
+    const { data: existingConvs } = await supabase
+      .from('conversations')
+      .select('*')
+      .in('contact_id', ids)
+      .eq('channel', 'whatsapp')
+      .in('status', ['active', 'escalated'])
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+    if (existingConvs && existingConvs.length > 0) {
+      conversation = existingConvs[0]
+      contact = matchingContacts.find((c) => c.id === conversation!.contact_id) || matchingContacts[0]
+    } else {
+      // No active conversation across duplicates — pick most recently updated
+      contact = matchingContacts.sort((a, b) =>
+        (b.updated_at || b.created_at).localeCompare(a.updated_at || a.created_at)
+      )[0]
+    }
+  }
+  console.log('[WH] contact lookup:', contact?.id || 'NOT FOUND', 'from:', parsed.from,
+    'matches:', matchingContacts.length, 'reused conv:', conversation?.id || 'no')
 
   if (!contact) {
     const { data: newContact, error: insertErr } = await supabase
@@ -67,17 +95,19 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     contact = newContact!
   }
 
-  // Find or create conversation
-  let { data: conversation, error: convErr } = await supabase
-    .from('conversations')
-    .select('*')
-    .eq('contact_id', contact.id)
-    .eq('channel', 'whatsapp')
-    .eq('status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
-  console.log('[WH] conversation lookup:', conversation?.id || 'NOT FOUND', convErr?.code)
+  // Find or create conversation (may have been resolved already during contact lookup)
+  if (!conversation) {
+    const { data: existing } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('contact_id', contact.id)
+      .eq('channel', 'whatsapp')
+      .in('status', ['active', 'escalated'])
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+    conversation = existing?.[0] || null
+  }
+  console.log('[WH] conversation lookup:', conversation?.id || 'NOT FOUND')
 
   if (!conversation) {
     const { data: newConv, error: convInsertErr } = await supabase
@@ -92,6 +122,8 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     console.log('[WH] conversation created:', newConv?.id, convInsertErr?.message)
     conversation = newConv!
   }
+  if (!conversation) throw new Error('Failed to create conversation')
+  const conv = conversation
 
   // Process media content (audio/image) before saving
   let processedContent = parsed.content
@@ -109,7 +141,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
         mediaType: 'audio',
         contactName: contact.name,
         contactCategory: contact.category,
-        conversationId: conversation.id,
+        conversationId: conv.id,
       })
     }
   } else if (parsed.contentType === 'image' && parsed.mediaUrl) {
@@ -125,7 +157,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
         mediaType: 'image',
         contactName: contact.name,
         contactCategory: contact.category,
-        conversationId: conversation.id,
+        conversationId: conv.id,
         originalCaption: parsed.content !== '[Imagem]' ? parsed.content : undefined,
       })
     }
@@ -135,7 +167,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       mediaType: 'document',
       contactName: contact.name,
       contactCategory: contact.category,
-      conversationId: conversation.id,
+      conversationId: conv.id,
       originalCaption: parsed.content,
     })
   }
@@ -143,7 +175,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   // Save inbound message
   console.log('[WH] saving inbound message...')
   const { error: msgErr } = await supabase.from('messages').insert({
-    conversation_id: conversation.id,
+    conversation_id: conv.id,
     direction: 'inbound',
     sender: 'contact',
     content: processedContent,
@@ -157,7 +189,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   await supabase
     .from('conversations')
     .update({ last_message_at: new Date().toISOString() })
-    .eq('id', conversation.id)
+    .eq('id', conv.id)
   console.log('[WH] conversation updated')
 
   // Pre-AI escalation check
@@ -171,7 +203,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       contactCategory: contact.category,
       triggeringMessage: processedContent,
       ruleName: escalation.ruleName!,
-      conversationId: conversation.id,
+      conversationId: conv.id,
     })
     return
   }
@@ -181,7 +213,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       'Vou pedir para o Lucas entrar em contato com você sobre isso. Ele retornará em breve!'
 
     await supabase.from('messages').insert({
-      conversation_id: conversation.id,
+      conversation_id: conv.id,
       direction: 'outbound',
       sender: 'ai',
       content: response,
@@ -192,7 +224,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     await supabase
       .from('conversations')
       .update({ status: 'escalated' })
-      .eq('id', conversation.id)
+      .eq('id', conv.id)
 
     await sendText({ to: parsed.from, text: response })
 
@@ -201,10 +233,10 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       contactCategory: contact.category,
       triggeringMessage: processedContent,
       ruleName: escalation.ruleName!,
-      conversationId: conversation.id,
+      conversationId: conv.id,
     })
 
-    await logAudit('escalation', 'ai', 'conversation', conversation.id, {
+    await logAudit('escalation', 'ai', 'conversation', conv.id, {
       rule: escalation.ruleName,
       contact_name: contact.name,
     })
@@ -213,7 +245,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
 
   // Load context and generate AI response
   console.log('[WH] loading context...')
-  const context = await loadConversationContext(contact.id, conversation.id)
+  const context = await loadConversationContext(contact.id, conv.id)
   console.log('[WH] context loaded, building prompt...')
   const systemPrompt = buildSystemPrompt(context)
 
@@ -228,7 +260,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
 
   // Save AI response FIRST — this must succeed for conversation history to work
   const { error: saveErr } = await supabase.from('messages').insert({
-    conversation_id: conversation.id,
+    conversation_id: conv.id,
     direction: 'outbound',
     sender: 'ai',
     content: aiResult.text,
@@ -252,7 +284,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
         contactCategory: contact.category,
         triggeringMessage: processedContent,
         ruleName: escalation.ruleName || 'AI self-escalation',
-        conversationId: conversation.id,
+        conversationId: conv.id,
       })
     }
 
@@ -260,13 +292,13 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       await notifyLucasDoubt({
         contactName: contact.name,
         contactCategory: contact.category,
-        conversationId: conversation.id,
+        conversationId: conv.id,
         aiResponse: aiResult.text,
         triggeringMessage: processedContent,
       })
     }
 
-    await logAudit('ai_response', 'ai', 'conversation', conversation.id, {
+    await logAudit('ai_response', 'ai', 'conversation', conv.id, {
       contact_name: contact.name,
       tokens_in: aiResult.tokensIn,
       tokens_out: aiResult.tokensOut,
