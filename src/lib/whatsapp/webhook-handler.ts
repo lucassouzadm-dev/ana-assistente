@@ -8,7 +8,7 @@ import { checkEscalationRules, checkAIResponseForEscalation } from '@/lib/ai/esc
 import { notifyLucasEscalation } from '@/lib/notifications/notify-lucas'
 import { handleLucasCommand } from '@/lib/ai/command-handler'
 import { transcribeAudio, describeImage, forwardMediaToLucasWithContext, notifyLucasDoubt } from '@/lib/ai/media-handler'
-import { phonesMatch, phoneVariants } from '@/lib/utils/phone'
+import { phonesMatch } from '@/lib/utils/phone'
 
 export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   const event = (payload.event as string || '').toLowerCase().replace(/_/g, '.')
@@ -40,16 +40,17 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     return
   }
 
-  // Find or create contact (match BR mobile with/without 9 prefix)
-  const phoneCandidates = phoneVariants(parsed.from)
-  const { data: matches, error: contactErr } = await supabase
+  // Find or create contact — robust match handling:
+  //   - BR mobile with/without 9 prefix
+  //   - phone stored with formatting (parens, spaces, dashes)
+  // Strategy: fetch all active contacts with a phone, compare digits via phonesMatch.
+  const { data: candidatesList } = await supabase
     .from('contacts')
     .select('*')
-    .in('phone', phoneCandidates)
-    .order('is_active', { ascending: false })
-    .limit(1)
-  let contact = matches?.[0] || null
-  console.log('[WH] contact lookup:', contact?.id || 'NOT FOUND', 'tried:', phoneCandidates, contactErr?.code)
+    .not('phone', 'is', null)
+    .eq('is_active', true)
+  let contact = (candidatesList || []).find((c) => phonesMatch(c.phone, parsed.from)) || null
+  console.log('[WH] contact lookup:', contact?.id || 'NOT FOUND', 'from:', parsed.from, 'candidates scanned:', candidatesList?.length || 0)
 
   if (!contact) {
     const { data: newContact, error: insertErr } = await supabase

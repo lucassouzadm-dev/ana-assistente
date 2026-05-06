@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/client'
 import { CONTACT_CATEGORY_LABELS } from '@/lib/utils/constants'
+import { normalizePhone } from '@/lib/utils/phone'
 import type { Contact, ContactCategory } from '@/types/database'
 
 interface ContactFormProps {
@@ -33,7 +34,7 @@ export function ContactForm({ contact }: ContactFormProps) {
     const supabase = createClient()
     const data = {
       name,
-      phone: phone || null,
+      phone: phone ? normalizePhone(phone) : null,
       email: email || null,
       category,
       relationship_description: description || null,
