@@ -8,6 +8,7 @@ import { checkEscalationRules, checkAIResponseForEscalation } from '@/lib/ai/esc
 import { notifyLucasEscalation } from '@/lib/notifications/notify-lucas'
 import { handleLucasCommand } from '@/lib/ai/command-handler'
 import { transcribeAudio, describeImage, forwardMediaToLucasWithContext, notifyLucasDoubt } from '@/lib/ai/media-handler'
+import { phonesMatch } from '@/lib/utils/phone'
 
 export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   const event = (payload.event as string || '').toLowerCase().replace(/_/g, '.')
@@ -32,8 +33,8 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   console.log('[WH] dedup:', existing ? 'DUPLICATE' : 'NEW', dedupError?.code)
   if (existing) return
 
-  // Check if sender is Lucas
-  if (lucasPhone && parsed.from === lucasPhone) {
+  // Check if sender is Lucas (handles BR mobile 9-digit vs 12-digit legacy format)
+  if (phonesMatch(lucasPhone, parsed.from)) {
     console.log('[WH] Lucas command detected')
     await handleLucasCommand(parsed.content, parsed.messageId)
     return
