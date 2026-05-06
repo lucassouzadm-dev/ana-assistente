@@ -20,12 +20,20 @@ export async function generateResponse(
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; functionCalls?: unknown[]; hasDoubt?: boolean }> {
   const model = getModel()
 
-  const history: Content[] = messages.slice(0, -1).map((msg) => ({
+  // Gemini requires history to start with role 'user'. If the first messages are
+  // 'model' (e.g., AI initiated the conversation), drop them.
+  let trimmed = messages.slice()
+  while (trimmed.length > 0 && trimmed[0].role === 'model') trimmed.shift()
+  if (trimmed.length === 0) {
+    trimmed = [{ role: 'user', content: messages[messages.length - 1]?.content || '' }]
+  }
+
+  const history: Content[] = trimmed.slice(0, -1).map((msg) => ({
     role: msg.role,
     parts: [{ text: msg.content }],
   }))
 
-  const lastMessage = messages[messages.length - 1]
+  const lastMessage = trimmed[trimmed.length - 1]
 
   const chat = model.startChat({
     history,
