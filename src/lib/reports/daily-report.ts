@@ -3,11 +3,24 @@ import { generateResponse, type ChatMessage } from '@/lib/ai/gemini-client'
 import { formatBRL } from '@/lib/utils/currency'
 import { sendDailyReportToLucas } from '@/lib/notifications/notify-lucas'
 
+function getBRTDate(date = new Date()): string {
+  const tz = process.env.TIMEZONE || 'America/Bahia'
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+  return parts
+}
+
 export async function generateDailyReport(reportDate?: string) {
   const supabase = createAdminClient()
-  const today = reportDate || new Date().toISOString().split('T')[0]
-  const startOfDay = `${today}T00:00:00.000Z`
-  const endOfDay = `${today}T23:59:59.999Z`
+  const today = reportDate || getBRTDate()
+  const startOfDay = `${today}T03:00:00.000Z`
+  const nextDay = new Date(`${today}T03:00:00.000Z`)
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1)
+  const endOfDay = nextDay.toISOString()
 
   // Gather data
   const [messagesRes, newContactsRes, escalationsRes, revenueRes, expensesRes, tasksCreatedRes, tasksCompletedRes] =
