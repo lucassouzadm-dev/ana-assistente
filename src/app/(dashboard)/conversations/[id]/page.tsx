@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Send, AlertTriangle, User, Bot } from 'lucide-react'
+import { ArrowLeft, Send, AlertTriangle, User, Bot, Flag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -103,6 +103,41 @@ export default function ConversationDetailPage() {
     setSending(false)
   }
 
+  async function handleEscalate() {
+    if (!conversation) return
+    const reason = prompt('Motivo do escalonamento (opcional):')
+    if (reason === null) return
+
+    const supabase = createClient()
+    await supabase
+      .from('conversations')
+      .update({ status: 'escalated' })
+      .eq('id', conversation.id)
+
+    await supabase.from('audit_log').insert({
+      action: 'escalation',
+      actor: 'user',
+      entity_type: 'conversation',
+      entity_id: conversation.id,
+      details: { reason: reason || 'manual', contact_name: contact?.name },
+    })
+
+    setConversation({ ...conversation, status: 'escalated' })
+  }
+
+  async function handleCloseConversation() {
+    if (!conversation) return
+    if (!confirm('Encerrar esta conversa?')) return
+
+    const supabase = createClient()
+    await supabase
+      .from('conversations')
+      .update({ status: 'closed' })
+      .eq('id', conversation.id)
+
+    setConversation({ ...conversation, status: 'closed' })
+  }
+
   async function handleInitiateAI() {
     if (!contact) return
     const goal = prompt('Qual o objetivo da mensagem que a Ana deve enviar?')
@@ -146,6 +181,17 @@ export default function ConversationDetailPage() {
           <Bot className="h-4 w-4" />
           Ana responder
         </Button>
+        {conversation.status === 'active' && (
+          <Button variant="destructive" size="sm" onClick={handleEscalate}>
+            <Flag className="h-4 w-4" />
+            Escalar
+          </Button>
+        )}
+        {conversation.status !== 'closed' && (
+          <Button variant="outline" size="sm" onClick={handleCloseConversation}>
+            Encerrar
+          </Button>
+        )}
       </div>
 
       {/* Escalation banner */}

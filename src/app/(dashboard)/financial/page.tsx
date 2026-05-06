@@ -8,16 +8,18 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '@/components/shared/empty-state'
-import { DollarSign, Plus, Search, TrendingUp, TrendingDown, ArrowUpDown } from 'lucide-react'
+import { DollarSign, Plus, Search, TrendingUp, TrendingDown, ArrowUpDown, BarChart3, List } from 'lucide-react'
 import { formatBRL } from '@/lib/utils/currency'
 import { TRANSACTION_TYPE_LABELS, PAYMENT_METHOD_LABELS } from '@/lib/utils/constants'
-import type { FinancialTransaction, TransactionType, PaymentMethod } from '@/types/database'
+import { FinancialCharts } from '@/components/financial/financial-charts'
+import type { FinancialTransaction, PaymentMethod } from '@/types/database'
 
 export default function FinancialPage() {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [view, setView] = useState<'list' | 'charts'>('list')
   const [monthFilter, setMonthFilter] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -59,9 +61,27 @@ export default function FinancialPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Financeiro</h1>
-        <Link href="/financial/new">
-          <Button><Plus className="mr-2 h-4 w-4" />Nova Transação</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md border">
+            <button
+              onClick={() => setView('list')}
+              className={`flex items-center gap-1 px-3 py-2 text-sm ${view === 'list' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            >
+              <List className="h-4 w-4" />
+              Lista
+            </button>
+            <button
+              onClick={() => setView('charts')}
+              className={`flex items-center gap-1 px-3 py-2 text-sm ${view === 'charts' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            >
+              <BarChart3 className="h-4 w-4" />
+              Gráficos
+            </button>
+          </div>
+          <Link href="/financial/new">
+            <Button><Plus className="mr-2 h-4 w-4" />Nova Transação</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -101,18 +121,26 @@ export default function FinancialPage() {
       </div>
 
       <div className="flex flex-col gap-4 sm:flex-row">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Buscar descrição..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
+        {view === 'list' && (
+          <>
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Buscar descrição..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+            </div>
+          </>
+        )}
         <Input type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-auto" />
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-md border px-3 py-2 text-sm">
-          <option value="all">Todos</option>
-          {Object.entries(TRANSACTION_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
+        {view === 'list' && (
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-md border px-3 py-2 text-sm">
+            <option value="all">Todos</option>
+            {Object.entries(TRANSACTION_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        )}
       </div>
 
-      {filtered.length === 0 ? (
+      {view === 'charts' ? (
+        <FinancialCharts transactions={transactions as unknown as Parameters<typeof FinancialCharts>[0]['transactions']} />
+      ) : filtered.length === 0 ? (
         <EmptyState icon={DollarSign} title="Nenhuma transação" description="Registre receitas e despesas." />
       ) : (
         <div className="space-y-2">

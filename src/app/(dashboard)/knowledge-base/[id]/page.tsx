@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KBForm } from '@/components/knowledge-base/kb-form'
+import { KBDocuments } from '@/components/knowledge-base/kb-documents'
 import { KB_CATEGORY_LABELS } from '@/lib/utils/constants'
 import { Pencil, Trash2, ArrowLeft } from 'lucide-react'
 import type { KnowledgeBaseEntry, KBCategory } from '@/types/database'
@@ -83,6 +84,8 @@ export default function KBEntryDetailPage() {
           <div className="whitespace-pre-wrap text-sm">{entry.content}</div>
         </CardContent>
       </Card>
+
+      <KBDocuments kbEntryId={entry.id} />
     </div>
   )
 }

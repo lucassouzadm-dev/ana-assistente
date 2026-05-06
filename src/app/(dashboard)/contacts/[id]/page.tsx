@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Trash2, MessageSquare } from 'lucide-react'
+import { ArrowLeft, Trash2, MessageSquare, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 import { ContactCategoryBadge } from '@/components/contacts/contact-category-badge'
 import { ContactForm } from '@/components/contacts/contact-form'
 import { createClient } from '@/lib/supabase/client'
@@ -19,6 +20,9 @@ export default function ContactDetailPage() {
   const [contact, setContact] = useState<Contact | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
+  const [showInitiate, setShowInitiate] = useState(false)
+  const [goal, setGoal] = useState('')
+  const [initiating, setInitiating] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -39,6 +43,24 @@ export default function ContactDetailPage() {
     const supabase = createClient()
     await supabase.from('contacts').update({ is_active: false }).eq('id', params.id as string)
     router.push('/contacts')
+  }
+
+  async function handleInitiate() {
+    if (!goal.trim()) return
+    setInitiating(true)
+    try {
+      const res = await fetch('/api/ai/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact_id: params.id, goal, channel: 'whatsapp' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Falha ao iniciar conversa')
+      router.push(`/conversations/${data.conversation_id}`)
+    } catch (err) {
+      alert((err as Error).message)
+      setInitiating(false)
+    }
   }
 
   if (loading) {
@@ -71,6 +93,12 @@ export default function ContactDetailPage() {
             Conversas
           </Button>
         </Link>
+        {contact.phone && (
+          <Button variant="default" size="sm" onClick={() => setShowInitiate(true)}>
+            <Sparkles className="h-4 w-4" />
+            Iniciar com IA
+          </Button>
+        )}
         <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
           Editar
         </Button>
@@ -119,6 +147,32 @@ export default function ContactDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {showInitiate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !initiating && setShowInitiate(false)}>
+          <div className="w-full max-w-md rounded-lg bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <h2 className="mb-2 text-lg font-semibold">Iniciar conversa com IA</h2>
+            <p className="mb-4 text-sm text-muted-foreground">
+              A Ana enviará a primeira mensagem para {contact.name} via WhatsApp com o objetivo abaixo.
+            </p>
+            <Textarea
+              placeholder="Ex: agendar visita técnica para reparo no chuveiro da Casa Praia na quinta-feira"
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={4}
+              disabled={initiating}
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowInitiate(false)} disabled={initiating}>
+                Cancelar
+              </Button>
+              <Button onClick={handleInitiate} disabled={initiating || !goal.trim()}>
+                {initiating ? 'Enviando...' : 'Enviar'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

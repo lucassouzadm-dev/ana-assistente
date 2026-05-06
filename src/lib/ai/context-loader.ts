@@ -38,7 +38,7 @@ export async function loadConversationContext(
         : Promise.resolve({ data: [] }),
       supabase
         .from('knowledge_base')
-        .select('title, content, priority')
+        .select('title, content, priority, knowledge_base_documents(file_name, extracted_text)')
         .eq('is_active', true)
         .order('priority', { ascending: false })
         .limit(10),
@@ -65,10 +65,17 @@ export async function loadConversationContext(
     content: m.content,
   }))
 
-  const knowledgeBase = (kbRes.data || []).map((kb: { title: string; content: string }) => ({
-    title: kb.title,
-    content: kb.content,
-  }))
+  const knowledgeBase = (kbRes.data || []).map((kb: Record<string, unknown>) => {
+    const docs = (kb.knowledge_base_documents as { file_name: string; extracted_text: string | null }[] | null) || []
+    const docsText = docs
+      .filter((d) => d.extracted_text)
+      .map((d) => `[Anexo: ${d.file_name}]\n${d.extracted_text}`)
+      .join('\n\n')
+    return {
+      title: kb.title as string,
+      content: docsText ? `${kb.content}\n\n${docsText}` : (kb.content as string),
+    }
+  })
 
   const activeReservations = (reservationsRes.data || []).map((r: Record<string, unknown>) => ({
     property: ((r.properties as { name: string }) || { name: 'N/A' }).name,
