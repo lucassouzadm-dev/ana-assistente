@@ -37,35 +37,44 @@ export function phoneVariants(phone: string): string[] {
   return Array.from(variants)
 }
 
+/**
+ * Reduces a Brazilian phone (any common format) to a canonical 13-digit form
+ * starting with country code 55 and including the mobile 9 prefix.
+ * Returns the digits-only string if it can't be canonicalized.
+ *
+ * Handles:
+ *   - "+5575982405262" / "5575982405262"   → "5575982405262"
+ *   - "+557582405262" / "557582405262"     → "5575982405262" (adds 9)
+ *   - "75982405262" / "(75) 98240-5262"    → "5575982405262" (adds 55)
+ *   - "7582405262" / "(75) 8240-5262"      → "5575982405262" (adds 55 and 9)
+ *   - "982405262" / "98240-5262"           → "982405262" (no DDD, can't canonicalize)
+ */
+function brCanonical(phone: string): string {
+  let d = phone.replace(/\D/g, '')
+
+  // Strip country code if present
+  if (d.length === 13 && d.startsWith('55')) d = d.slice(2)
+  else if (d.length === 12 && d.startsWith('55')) d = d.slice(2)
+
+  // Now d should be 10 (DDD + 8) or 11 (DDD + 9 + 8) digits for BR mobile
+  if (d.length === 11 && d[2] === '9') {
+    return `55${d}`
+  }
+  if (d.length === 10) {
+    // Legacy 8-digit number without the 9 — add it
+    return `55${d.slice(0, 2)}9${d.slice(2)}`
+  }
+
+  // Not a recognizable BR mobile — fall back to digits-only
+  return phone.replace(/\D/g, '')
+}
+
 export function phonesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false
   const digitsA = a.replace(/\D/g, '')
   const digitsB = b.replace(/\D/g, '')
   if (digitsA === digitsB) return true
-
-  // Handle BR mobile: 13-digit (with 9 prefix) vs 12-digit (legacy without 9)
-  // Format: 55 + DDD(2) + [9] + number(8)
-  const stripBr9 = (p: string) => {
-    if (p.length === 13 && p.startsWith('55')) {
-      const ddd = p.slice(2, 4)
-      const rest = p.slice(4)
-      if (rest.startsWith('9') && rest.length === 9) {
-        return `55${ddd}${rest.slice(1)}`
-      }
-    }
-    return p
-  }
-  const addBr9 = (p: string) => {
-    if (p.length === 12 && p.startsWith('55')) {
-      const ddd = p.slice(2, 4)
-      const rest = p.slice(4)
-      if (rest.length === 8) {
-        return `55${ddd}9${rest}`
-      }
-    }
-    return p
-  }
-  return stripBr9(digitsA) === stripBr9(digitsB) || addBr9(digitsA) === addBr9(digitsB)
+  return brCanonical(a) === brCanonical(b)
 }
 
 export function formatPhone(phone: string): string {
