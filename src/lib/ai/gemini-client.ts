@@ -21,19 +21,23 @@ export async function generateResponse(
   const model = getModel()
 
   // Gemini requires history to start with role 'user'. If the first messages are
-  // 'model' (e.g., AI initiated the conversation), drop them.
-  let trimmed = messages.slice()
-  while (trimmed.length > 0 && trimmed[0].role === 'model') trimmed.shift()
-  if (trimmed.length === 0) {
-    trimmed = [{ role: 'user', content: messages[messages.length - 1]?.content || '' }]
+  // 'model' (e.g., AI initiated the conversation), prepend a synthetic user turn
+  // that preserves the AI's opening message in the history — otherwise the model
+  // forgets it spoke first and re-greets the contact.
+  const normalized: ChatMessage[] = messages.slice()
+  if (normalized.length > 0 && normalized[0].role === 'model') {
+    normalized.unshift({
+      role: 'user',
+      content: '[Sistema: Você iniciou esta conversa enviando a próxima mensagem por instrução do Lucas. Continue de onde parou — não se reapresente.]',
+    })
   }
 
-  const history: Content[] = trimmed.slice(0, -1).map((msg) => ({
+  const history: Content[] = normalized.slice(0, -1).map((msg) => ({
     role: msg.role,
     parts: [{ text: msg.content }],
   }))
 
-  const lastMessage = trimmed[trimmed.length - 1]
+  const lastMessage = normalized[normalized.length - 1]
 
   const chat = model.startChat({
     history,
