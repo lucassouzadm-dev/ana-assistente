@@ -179,6 +179,7 @@ async function executeFunctionCall(name: string, args: Record<string, string>): 
         .limit(1)
 
       let conv = existingConvs?.[0]
+      const isExistingConv = !!conv
       if (!conv) {
         const { data: newConv } = await supabase
           .from('conversations')
@@ -188,10 +189,53 @@ async function executeFunctionCall(name: string, args: Record<string, string>): 
         conv = newConv!
       }
 
-      const systemPrompt = `Você é Ana, assistente do Lucas. Inicie uma conversa com ${contact.name} com o seguinte objetivo: ${goal}. Seja educada e direta.`
-      const result = await generateResponse(systemPrompt, [
-        { role: 'user', content: `Gere a primeira mensagem para ${contact.name} com objetivo: ${goal}` },
-      ])
+      // Load existing history so the AI knows whether to introduce herself
+      let history: { role: 'user' | 'model'; content: string }[] = []
+      if (isExistingConv) {
+        const { data: prevMsgs } = await supabase
+          .from('messages')
+          .select('direction, content')
+          .eq('conversation_id', conv.id)
+          .order('created_at', { ascending: true })
+          .limit(20)
+        history = (prevMsgs || []).map((m) => ({
+          role: (m.direction === 'inbound' ? 'user' : 'model') as 'user' | 'model',
+          content: m.content as string,
+        }))
+      }
+
+      const hasPriorAiMsg = history.some((m) => m.role === 'model')
+
+      const systemPrompt = hasPriorAiMsg
+        ? `Você é Ana, assistente do Lucas (Tassimirim & Co, locação de imóveis por temporada).
+
+Esta conversa JÁ EXISTE — você já interagiu com ${contact.name} antes. Veja o histórico anexado como chat.
+
+Agora o Lucas pediu para você mandar uma nova mensagem com este objetivo: ${goal}.
+
+REGRAS:
+- NÃO se apresente novamente, NÃO diga "sou a Ana", "assistente do Lucas", "meu nome é Ana".
+- NÃO comece com "Olá ${contact.name}" como se fosse a primeira interação.
+- Vá DIRETO ao assunto do objetivo. Pode começar com algo como "${contact.name}, ..." ou contextualizando o motivo.
+- Mantenha tom natural de continuidade, como se a última mensagem dela ainda estivesse fresca.
+- Português brasileiro, breve (máximo 2-3 parágrafos curtos), sem markdown.`
+        : `Você é Ana, assistente do Lucas (Tassimirim & Co, locação de imóveis por temporada).
+
+Esta é a PRIMEIRA vez que você fala com ${contact.name}. Apresente-se brevemente e vá ao objetivo: ${goal}.
+
+Seja educada, profissional e direta. Português brasileiro, breve (máximo 2-3 parágrafos curtos), sem markdown.`
+
+      const messages: ChatMessage[] = [
+        ...history,
+        {
+          role: 'user',
+          content: hasPriorAiMsg
+            ? `[Instrução interna do Lucas — não é mensagem do contato] Mande uma nova mensagem para ${contact.name} agora com este objetivo: ${goal}. Sem reapresentação, vá ao ponto.`
+            : `Gere a primeira mensagem para ${contact.name} com objetivo: ${goal}`,
+        },
+      ]
+
+      const result = await generateResponse(systemPrompt, messages)
 
       const nowIso = new Date().toISOString()
       await supabase.from('messages').insert({

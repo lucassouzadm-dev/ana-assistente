@@ -34,20 +34,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // Generate message
-    const personaName = process.env.AI_PERSONA_NAME || 'Ana'
-    const systemPrompt = `Você é ${personaName}, assistente do Lucas que administra uma empresa de locação de imóveis por temporada.
-Inicie uma conversa com ${contact.name} (${contact.category}) com o seguinte objetivo: ${goal}.
-${contact.relationship_description ? `Contexto do relacionamento: ${contact.relationship_description}` : ''}
-Seja educada, profissional e direta. A mensagem será enviada via WhatsApp, então mantenha-a curta (máximo 3 frases).
-NÃO use markdown. Use português brasileiro natural.`
-
-    const messages: ChatMessage[] = [
-      { role: 'user', content: `Gere a primeira mensagem para ${contact.name}. Objetivo: ${goal}` },
-    ]
-
-    const result = await generateResponse(systemPrompt, messages)
-
     // Reuse the most recent active conversation if one exists — avoid splitting
     // the history. Otherwise create a new one.
     const { data: existing } = await supabase
@@ -60,6 +46,59 @@ NÃO use markdown. Use português brasileiro natural.`
       .limit(1)
 
     let conversation = existing?.[0]
+    const isExistingConv = !!conversation
+
+    // Load existing history so the AI knows whether to introduce herself
+    let history: ChatMessage[] = []
+    if (isExistingConv) {
+      const { data: prevMsgs } = await supabase
+        .from('messages')
+        .select('direction, content')
+        .eq('conversation_id', conversation.id)
+        .order('created_at', { ascending: true })
+        .limit(20)
+      history = (prevMsgs || []).map((m) => ({
+        role: (m.direction === 'inbound' ? 'user' : 'model') as 'user' | 'model',
+        content: m.content as string,
+      }))
+    }
+    const hasPriorAiMsg = history.some((m) => m.role === 'model')
+
+    // Generate message
+    const personaName = process.env.AI_PERSONA_NAME || 'Ana'
+    const relCtx = contact.relationship_description ? `Contexto do relacionamento: ${contact.relationship_description}` : ''
+
+    const systemPrompt = hasPriorAiMsg
+      ? `Você é ${personaName}, assistente do Lucas (locação de imóveis por temporada).
+
+Esta conversa JÁ EXISTE — você já interagiu com ${contact.name} antes (veja o histórico).
+
+Agora o Lucas pediu para você mandar uma nova mensagem com este objetivo: ${goal}.
+${relCtx}
+
+REGRAS:
+- NÃO se apresente novamente, NÃO diga "sou a Ana", "assistente do Lucas", "meu nome é Ana".
+- NÃO comece com "Olá ${contact.name}" como se fosse a primeira interação.
+- Vá DIRETO ao assunto do objetivo.
+- Tom de continuidade, máximo 3 frases curtas, sem markdown.`
+      : `Você é ${personaName}, assistente do Lucas que administra uma empresa de locação de imóveis por temporada.
+
+Esta é a PRIMEIRA vez que você fala com ${contact.name} (${contact.category}). Apresente-se brevemente e vá ao objetivo: ${goal}.
+${relCtx}
+
+Seja educada, profissional e direta. Máximo 3 frases, sem markdown.`
+
+    const messages: ChatMessage[] = [
+      ...history,
+      {
+        role: 'user',
+        content: hasPriorAiMsg
+          ? `[Instrução interna do Lucas — não é mensagem do contato] Mande uma nova mensagem para ${contact.name} agora com este objetivo: ${goal}. Sem reapresentação, vá ao ponto.`
+          : `Gere a primeira mensagem para ${contact.name}. Objetivo: ${goal}`,
+      },
+    ]
+
+    const result = await generateResponse(systemPrompt, messages)
     if (!conversation) {
       const { data: newConv } = await supabase
         .from('conversations')
