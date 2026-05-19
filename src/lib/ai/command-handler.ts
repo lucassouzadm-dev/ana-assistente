@@ -165,26 +165,49 @@ async function executeFunctionCall(name: string, args: Record<string, string>): 
         return `Contato ${contact.name} não tem telefone cadastrado.`
       }
 
-      // Create conversation and send initial message via AI
-      const { data: conv } = await supabase
+      // Reuse the most recent active conversation (or create one if none exists).
+      // Creating a new conversation on every initiate splits the history — when
+      // the contact replies, the webhook may match the older conversation and
+      // the AI re-greets, losing the new context.
+      const { data: existingConvs } = await supabase
         .from('conversations')
-        .insert({ contact_id: contact.id, channel: 'whatsapp', status: 'active' })
-        .select()
-        .single()
+        .select('*')
+        .eq('contact_id', contact.id)
+        .eq('channel', 'whatsapp')
+        .in('status', ['active', 'escalated'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      let conv = existingConvs?.[0]
+      if (!conv) {
+        const { data: newConv } = await supabase
+          .from('conversations')
+          .insert({ contact_id: contact.id, channel: 'whatsapp', status: 'active' })
+          .select()
+          .single()
+        conv = newConv!
+      }
 
       const systemPrompt = `Você é Ana, assistente do Lucas. Inicie uma conversa com ${contact.name} com o seguinte objetivo: ${goal}. Seja educada e direta.`
       const result = await generateResponse(systemPrompt, [
         { role: 'user', content: `Gere a primeira mensagem para ${contact.name} com objetivo: ${goal}` },
       ])
 
+      const nowIso = new Date().toISOString()
       await supabase.from('messages').insert({
-        conversation_id: conv!.id,
+        conversation_id: conv.id,
         direction: 'outbound',
         sender: 'ai',
         content: result.text,
         content_type: 'text',
         ai_model: process.env.AI_MODEL || 'gemini-2.5-flash',
       })
+
+      // Bump last_message_at so the webhook can find this conversation when the contact replies
+      await supabase
+        .from('conversations')
+        .update({ last_message_at: nowIso })
+        .eq('id', conv.id)
 
       await sendText({ to: contact.phone, text: result.text })
       return `Mensagem enviada para ${contact.name}: "${result.text}"`

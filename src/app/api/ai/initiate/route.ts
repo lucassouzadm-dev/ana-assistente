@@ -48,21 +48,37 @@ NÃO use markdown. Use português brasileiro natural.`
 
     const result = await generateResponse(systemPrompt, messages)
 
-    // Create conversation
-    const { data: conversation } = await supabase
+    // Reuse the most recent active conversation if one exists — avoid splitting
+    // the history. Otherwise create a new one.
+    const { data: existing } = await supabase
       .from('conversations')
-      .insert({
-        contact_id: contact.id,
-        channel,
-        status: 'active',
-        summary: `Conversa iniciada com objetivo: ${goal}`,
-      })
-      .select()
-      .single()
+      .select('*')
+      .eq('contact_id', contact.id)
+      .eq('channel', channel)
+      .in('status', ['active', 'escalated'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    let conversation = existing?.[0]
+    if (!conversation) {
+      const { data: newConv } = await supabase
+        .from('conversations')
+        .insert({
+          contact_id: contact.id,
+          channel,
+          status: 'active',
+          summary: `Conversa iniciada com objetivo: ${goal}`,
+        })
+        .select()
+        .single()
+      conversation = newConv!
+    }
+
+    const nowIso = new Date().toISOString()
 
     // Save message
     await supabase.from('messages').insert({
-      conversation_id: conversation!.id,
+      conversation_id: conversation.id,
       direction: 'outbound',
       sender: 'ai',
       content: result.text,
@@ -71,6 +87,12 @@ NÃO use markdown. Use português brasileiro natural.`
       ai_tokens_in: result.tokensIn,
       ai_tokens_out: result.tokensOut,
     })
+
+    // Bump last_message_at so the webhook routes the contact's reply to this conversation
+    await supabase
+      .from('conversations')
+      .update({ last_message_at: nowIso })
+      .eq('id', conversation.id)
 
     // Send via WhatsApp
     if (channel === 'whatsapp' && contact.phone) {
@@ -82,12 +104,12 @@ NÃO use markdown. Use português brasileiro natural.`
       action: 'ai_initiate_conversation',
       actor: 'user',
       entity_type: 'conversation',
-      entity_id: conversation!.id,
+      entity_id: conversation.id,
       details: { contact_name: contact.name, goal, message_sent: result.text },
     })
 
     return NextResponse.json({
-      conversation_id: conversation!.id,
+      conversation_id: conversation.id,
       message: result.text,
     })
   } catch (error) {
