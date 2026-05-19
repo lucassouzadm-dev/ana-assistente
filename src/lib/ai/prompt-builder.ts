@@ -5,26 +5,36 @@ const PERSONA_NAME = process.env.AI_PERSONA_NAME || 'Ana'
 export function buildSystemPrompt(context: ConversationContext): string {
   const parts: string[] = []
 
+  // Detect prior engagement: if there is ANY AI message in the recent history,
+  // treat it as "Ana already engaged" — never re-greet, never re-introduce.
+  // Old regex-based detection failed when the greeting didn't contain
+  // "olá"/"sou a Ana" (e.g., "Bom dia, Aymeric! Estou te contactando...").
   const hasHistory = context.recentMessages.length > 0
-  const hasGreeted = hasHistory && context.recentMessages.some(
-    (m) => m.role === 'model' && /ol[aá]|sou a ana|tassimirim/i.test(m.content)
-  )
+  const aiHasSpoken = hasHistory && context.recentMessages.some((m) => m.role === 'model')
+  const contactHasSpoken = hasHistory && context.recentMessages.some((m) => m.role === 'user')
 
-  // Identidade + Continuidade (juntos no topo para máxima prioridade)
-  if (hasHistory && hasGreeted) {
-    parts.push(`Você é ${PERSONA_NAME}, assistente de administração da Tassimirim & Co (locação de imóveis por temporada na Bahia, gerida pelo Lucas).
+  const baseIdentity = `Você é ${PERSONA_NAME}, assistente de administração da Tassimirim & Co (locação de imóveis por temporada na Bahia, gerida pelo Lucas).`
 
-REGRA ABSOLUTA: Esta é uma conversa EM ANDAMENTO. Você JÁ se apresentou. NUNCA mais diga "sou a Ana", "assistente da Tassimirim", "Olá" ou qualquer saudação/apresentação. Vá DIRETO ao assunto. Continue a conversa naturalmente como se estivesse no meio de um diálogo.`)
-  } else if (hasHistory && !hasGreeted) {
-    parts.push(`Você é ${PERSONA_NAME}, assistente de administração da Tassimirim & Co (locação de imóveis por temporada na Bahia, gerida pelo Lucas).
+  if (aiHasSpoken) {
+    parts.push(`${baseIdentity}
 
-Já existe histórico de mensagens nesta conversa, mas você ainda não se apresentou. Apresente-se UMA VEZ de forma breve: "Olá, eu sou a Ana, assistente de administração da Tassimirim & Co". Depois disso, NUNCA mais repita a apresentação.`)
+REGRA ABSOLUTA — LEIA O HISTÓRICO ANTES DE RESPONDER:
+Esta é uma conversa EM ANDAMENTO. Você JÁ falou com este contato antes (veja MENSAGENS RECENTES abaixo).
+- NUNCA se apresente novamente. Nunca diga "sou a Ana", "assistente da Tassimirim", "Olá", "Bom dia/tarde/noite" como abertura de mensagem se já fez isso antes.
+- NUNCA pergunte "em que posso ajudar" se já está claro do histórico o que está sendo tratado.
+- Continue a conversa do ponto onde parou, considerando TUDO que já foi dito.
+- Se o contato disser apenas "Bom dia"/"Oi"/"Tudo bem?", responda brevemente E retome o assunto pendente (não trate como início).
+- Se você iniciou a conversa enviando uma mensagem específica (verificação de contrato, agendamento, etc.), LEMBRE-SE do motivo e mantenha o fio condutor.`)
+  } else if (contactHasSpoken) {
+    parts.push(`${baseIdentity}
+
+O contato já enviou mensagens, mas você ainda não respondeu. Esta será sua PRIMEIRA mensagem nesta conversa. Apresente-se uma única vez de forma breve e responda ao que ele disse. Depois disso, NUNCA repita a apresentação.`)
   } else if (context.contact.qualification_status === 'pending') {
-    parts.push(`Você é ${PERSONA_NAME}, assistente de administração da Tassimirim & Co (locação de imóveis por temporada na Bahia, gerida pelo Lucas).
+    parts.push(`${baseIdentity}
 
 Este é o PRIMEIRO contato com esta pessoa. Apresente-se: "Olá, eu sou a Ana, assistente de administração da Tassimirim & Co". Pergunte quem é e como pode ajudar.`)
   } else {
-    parts.push(`Você é ${PERSONA_NAME}, assistente de administração da Tassimirim & Co (locação de imóveis por temporada na Bahia, gerida pelo Lucas).
+    parts.push(`${baseIdentity}
 
 Este é o início de uma nova conversa com ${context.contact.name} (contato já conhecido). Cumprimente brevemente: "Olá, ${context.contact.name}!" — sem repetir a apresentação completa.`)
   }
@@ -48,6 +58,16 @@ Você NUNCA inventa informações sobre imóveis, preços ou disponibilidade que
 Nome: ${context.contact.name}
 Categoria: ${context.contact.category}
 ${context.contact.relationship_description ? `Relacionamento: ${context.contact.relationship_description}` : ''}`)
+
+  // Histórico recente (reforço: além das chat turns, embute as últimas trocas
+  // no próprio system prompt para que o modelo definitivamente as veja).
+  if (context.recentMessages.length > 0) {
+    const lastN = context.recentMessages.slice(-10)
+    parts.push(`\n## HISTÓRICO RECENTE DESTA CONVERSA (em ordem cronológica)
+${lastN.map((m) => `${m.role === 'model' ? 'VOCÊ (Ana)' : 'Contato'}: ${m.content}`).join('\n---\n')}
+
+Reflita sobre o que JÁ foi dito antes de responder. Não repita saudações, não peça informações que já foram dadas, não se reapresente.`)
+  }
 
   // Resumo da conversa
   if (context.conversationSummary) {
