@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 
   const supabase = createAdminClient()
 
-  const [contacts, messages, conversations] = await Promise.all([
+  const [contacts, messages, conversations, webhookHits] = await Promise.all([
     supabase
       .from('contacts')
       .select('id, name, phone, category, is_active, created_at')
@@ -37,10 +37,17 @@ export async function GET(request: Request) {
       .select('id, contact_id, channel, status, created_at')
       .order('created_at', { ascending: false })
       .limit(5),
+    supabase
+      .from('audit_log')
+      .select('id, action, details, created_at')
+      .eq('action', 'webhook_hit')
+      .order('created_at', { ascending: false })
+      .limit(10),
   ])
 
   return NextResponse.json({
     timestamp: new Date().toISOString(),
+    webhook_hits: { data: webhookHits.data, error: webhookHits.error?.message },
     contacts: { data: contacts.data, error: contacts.error?.message },
     conversations: { data: conversations.data, error: conversations.error?.message },
     messages: { data: messages.data, error: messages.error?.message },

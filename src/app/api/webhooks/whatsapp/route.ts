@@ -1,10 +1,34 @@
 import { NextResponse } from 'next/server'
 import { handleWhatsAppWebhook } from '@/lib/whatsapp/webhook-handler'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
+  // Log EVERY incoming POST to audit_log immediately — before any parsing or auth.
+  // This lets us confirm whether Evolution API is reaching Vercel at all.
+  const rawBody = await request.text()
+  try {
+    const supabase = createAdminClient()
+    await supabase.from('audit_log').insert({
+      action: 'webhook_hit',
+      actor: 'evolution',
+      entity_type: 'webhook',
+      entity_id: 'whatsapp',
+      details: {
+        ts: new Date().toISOString(),
+        body_preview: rawBody.slice(0, 500),
+        headers: {
+          'content-type': request.headers.get('content-type'),
+          apikey: request.headers.get('apikey') ? '***' : null,
+        },
+      },
+    })
+  } catch (logErr) {
+    console.error('[WEBHOOK] Failed to log hit:', logErr)
+  }
+
   try {
     const webhookSecret = process.env.WHATSAPP_WEBHOOK_SECRET
     if (webhookSecret) {
@@ -14,19 +38,20 @@ export async function POST(request: Request) {
       }
     }
 
-    const payload = await request.json()
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(rawBody)
+    } catch {
+      console.error('[WEBHOOK] Invalid JSON body:', rawBody.slice(0, 200))
+      return NextResponse.json({ error: 'Bad request' }, { status: 400 })
+    }
     console.log('[WEBHOOK] Received event:', payload.event)
 
-    // Process synchronously within maxDuration = 60s.
-    // Evolution API retries on non-2xx, so we must return 200 quickly.
-    // We respond 200 first, then process — but since after() requires Vercel Pro
-    // for reliable background execution, we process inline and rely on the 60s timeout.
     try {
       await handleWhatsAppWebhook(payload)
       console.log('[WEBHOOK] Handler completed')
     } catch (error) {
       console.error('[WEBHOOK] Handler error:', error)
-      // Still return 200 to prevent Evolution API retry loops
     }
 
     return NextResponse.json({ status: 'ok' })
