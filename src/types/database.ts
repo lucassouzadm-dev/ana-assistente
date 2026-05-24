@@ -18,6 +18,9 @@ export type EscalationConditionType = 'financial_above' | 'complaint' | 'legal' 
 export type EscalationAction = 'escalate' | 'notify' | 'block'
 export type TransactionType = 'revenue' | 'expense'
 export type PaymentMethod = 'pix' | 'cash' | 'transfer' | 'card' | 'boleto' | 'other'
+export type AccountPayableStatus = 'open' | 'paid' | 'cancelled'
+export type AccountReceivableStatus = 'open' | 'received' | 'cancelled'
+export type CommissionStatus = 'pending' | 'paid' | 'cancelled'
 export type TaskStatus = 'pending' | 'in_progress' | 'waiting' | 'completed' | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type TaskCategory = 'maintenance' | 'cleaning' | 'inspection' | 'supply' | 'other'
@@ -210,6 +213,67 @@ export interface MessageTemplate {
   updated_at: string
 }
 
+export interface AccountPayable {
+  id: string
+  description: string
+  amount: number
+  due_date: string
+  paid_date: string | null
+  status: AccountPayableStatus
+  category_id: string | null
+  property_id: string | null
+  contact_id: string | null
+  notes: string | null
+  installment_number: number | null
+  installments_total: number | null
+  payment_method: PaymentMethod | null
+  receipt_url: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  category?: FinancialCategory
+  property?: Property
+  contact?: Contact
+}
+
+export interface AccountReceivable {
+  id: string
+  description: string
+  amount: number
+  due_date: string
+  received_date: string | null
+  status: AccountReceivableStatus
+  category_id: string | null
+  property_id: string | null
+  reservation_id: string | null
+  contact_id: string | null
+  notes: string | null
+  installment_number: number | null
+  installments_total: number | null
+  payment_method: PaymentMethod | null
+  receipt_url: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  category?: FinancialCategory
+  property?: Property
+  contact?: Contact
+}
+
+export interface Commission {
+  id: string
+  contact_id: string
+  reservation_id: string | null
+  rate_percent: number | null
+  calculated_amount: number
+  status: CommissionStatus
+  paid_date: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+  contact?: Contact
+}
+
 export interface DailyReport {
   id: string
   report_date: string
@@ -242,6 +306,9 @@ export interface Database {
       audit_log: { Row: { id: string; action: string; actor: string; entity_type: string | null; entity_id: string | null; details: Json; ip_address: string | null; created_at: string }; Insert: { action: string; actor: string; entity_type?: string; entity_id?: string; details?: Json; ip_address?: string }; Update: never }
       conversation_summaries: { Row: { id: string; contact_id: string; summary: string; key_facts: Json; last_message_id: string | null; created_at: string; updated_at: string }; Insert: { contact_id: string; summary: string; key_facts?: Json; last_message_id?: string }; Update: Partial<{ summary: string; key_facts: Json; last_message_id: string }> }
       daily_reports: { Row: DailyReport; Insert: Partial<DailyReport> & { report_date: string; summary: string }; Update: Partial<DailyReport> }
+      accounts_payable: { Row: AccountPayable; Insert: Partial<AccountPayable> & { description: string; amount: number; due_date: string }; Update: Partial<AccountPayable> }
+      accounts_receivable: { Row: AccountReceivable; Insert: Partial<AccountReceivable> & { description: string; amount: number; due_date: string }; Update: Partial<AccountReceivable> }
+      commissions: { Row: Commission; Insert: Partial<Commission> & { contact_id: string; calculated_amount: number }; Update: Partial<Commission> }
     }
   }
 }

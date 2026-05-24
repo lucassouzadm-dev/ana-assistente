@@ -10,6 +10,8 @@ import { handleLucasCommand } from '@/lib/ai/command-handler'
 import { transcribeAudio, describeImage, forwardMediaToLucasWithContext, notifyLucasDoubt } from '@/lib/ai/media-handler'
 import { phonesMatch } from '@/lib/utils/phone'
 
+const FALLBACK_RESPONSE = 'Olá! Recebi sua mensagem, mas estou com uma instabilidade momentânea. Por favor, tente novamente em alguns minutos. 🙏'
+
 export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   const event = (payload.event as string || '').toLowerCase().replace(/_/g, '.')
   console.log('[WH] raw event:', payload.event, '→ normalized:', event)
@@ -36,16 +38,18 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
   // Check if sender is Lucas (handles BR mobile 9-digit vs 12-digit legacy format)
   if (phonesMatch(lucasPhone, parsed.from)) {
     console.log('[WH] Lucas command detected')
-    await handleLucasCommand(parsed.content, parsed.messageId)
+    try {
+      await handleLucasCommand(parsed.content, parsed.messageId)
+    } catch (lucasErr) {
+      console.error('[WH] Lucas command error:', lucasErr)
+      const errMsg = lucasErr instanceof Error ? lucasErr.message : String(lucasErr)
+      await notifyLucasError(`Erro ao processar seu comando: ${errMsg}`)
+    }
     return
   }
 
-  // Find or create contact — robust match handling:
-  //   - BR mobile with/without 9 prefix
-  //   - phone stored with formatting (parens, spaces, dashes)
-  //   - DUPLICATES: same phone may exist on multiple contacts; prefer the one
-  //     that owns the most recently active conversation, otherwise the most
-  //     recently updated contact.
+  // ── Non-Lucas message flow ────────────────────────────────────────────────
+  // Contact + conversation lookup
   const { data: candidatesList } = await supabase
     .from('contacts')
     .select('*')
@@ -71,7 +75,6 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       conversation = existingConvs[0]
       contact = matchingContacts.find((c) => c.id === conversation!.contact_id) || matchingContacts[0]
     } else {
-      // No active conversation across duplicates — pick most recently updated
       contact = matchingContacts.sort((a, b) =>
         (b.updated_at || b.created_at).localeCompare(a.updated_at || a.created_at)
       )[0]
@@ -95,9 +98,9 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     contact = newContact!
   }
 
-  // Find or create conversation (may have been resolved already during contact lookup)
+  // Find or create conversation
   if (!conversation) {
-    const { data: existing } = await supabase
+    const { data: existingConv } = await supabase
       .from('conversations')
       .select('*')
       .eq('contact_id', contact.id)
@@ -105,7 +108,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       .in('status', ['active', 'escalated'])
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(1)
-    conversation = existing?.[0] || null
+    conversation = existingConv?.[0] || null
   }
   console.log('[WH] conversation lookup:', conversation?.id || 'NOT FOUND')
 
@@ -190,7 +193,6 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     .from('conversations')
     .update({ last_message_at: new Date().toISOString() })
     .eq('id', conv.id)
-  console.log('[WH] conversation updated')
 
   // Pre-AI escalation check
   console.log('[WH] checking escalation rules...')
@@ -220,14 +222,8 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       content_type: 'text',
       ai_model: 'rule-based',
     })
-
-    await supabase
-      .from('conversations')
-      .update({ status: 'escalated' })
-      .eq('id', conv.id)
-
+    await supabase.from('conversations').update({ status: 'escalated' }).eq('id', conv.id)
     await sendText({ to: parsed.from, text: response })
-
     await notifyLucasEscalation({
       contactName: contact.name,
       contactCategory: contact.category,
@@ -235,7 +231,6 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       ruleName: escalation.ruleName!,
       conversationId: conv.id,
     })
-
     await logAudit('escalation', 'ai', 'conversation', conv.id, {
       rule: escalation.ruleName,
       contact_name: contact.name,
@@ -254,30 +249,80 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
     { role: 'user', content: processedContent },
   ]
 
+  // Generate AI response — with fallback if the model call fails
   console.log('[WH] generating AI response...')
-  const aiResult = await generateResponse(systemPrompt, messages)
-  console.log('[WH] AI response:', aiResult.text?.slice(0, 80), 'tokens:', aiResult.tokensIn, aiResult.tokensOut)
+  let aiText: string
+  let aiTokensIn = 0
+  let aiTokensOut = 0
+  let aiHasDoubt = false
+  let aiModelUsed = process.env.AI_MODEL || 'gemini-2.5-flash'
 
-  // Save AI response FIRST — this must succeed for conversation history to work
+  try {
+    const aiResult = await generateResponse(systemPrompt, messages)
+    aiText = aiResult.text
+    aiTokensIn = aiResult.tokensIn
+    aiTokensOut = aiResult.tokensOut
+    aiHasDoubt = aiResult.hasDoubt || false
+    console.log('[WH] AI response:', aiText?.slice(0, 80), 'tokens:', aiTokensIn, aiTokensOut)
+  } catch (aiErr) {
+    // AI call failed — log the error, notify Lucas, send fallback to user
+    const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr)
+    console.error('[WH] AI generation failed:', errMsg)
+
+    // Notify Lucas about the AI failure
+    await notifyLucasError(
+      `⚠️ Falha na IA ao responder ${contact.name}:\n"${processedContent.slice(0, 100)}"\n\nErro: ${errMsg.slice(0, 200)}`
+    )
+
+    // Save the error to audit log
+    await logAudit('ai_error', 'ai', 'conversation', conv.id, {
+      contact_name: contact.name,
+      error: errMsg,
+      message: processedContent.slice(0, 500),
+    })
+
+    // Send fallback message to user so they're not ignored
+    await supabase.from('messages').insert({
+      conversation_id: conv.id,
+      direction: 'outbound',
+      sender: 'ai',
+      content: FALLBACK_RESPONSE,
+      content_type: 'text',
+      ai_model: 'fallback',
+    })
+    await sendText({ to: parsed.from, text: FALLBACK_RESPONSE })
+    return
+  }
+
+  // Save AI response
   const { error: saveErr } = await supabase.from('messages').insert({
     conversation_id: conv.id,
     direction: 'outbound',
     sender: 'ai',
-    content: aiResult.text,
+    content: aiText,
     content_type: 'text',
-    ai_model: process.env.AI_MODEL || 'gemini-2.5-flash',
-    ai_tokens_in: aiResult.tokensIn,
-    ai_tokens_out: aiResult.tokensOut,
+    ai_model: aiModelUsed,
+    ai_tokens_in: aiTokensIn,
+    ai_tokens_out: aiTokensOut,
   })
   console.log('[WH] AI response saved:', saveErr?.message || 'OK')
 
   // Send response via WhatsApp
-  await sendText({ to: parsed.from, text: aiResult.text })
-  console.log('[WH] WhatsApp reply sent')
-
-  // Notifications and audit — non-critical, wrapped in try/catch
   try {
-    const aiEscalated = checkAIResponseForEscalation(aiResult.text)
+    await sendText({ to: parsed.from, text: aiText })
+    console.log('[WH] WhatsApp reply sent')
+  } catch (sendErr) {
+    const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr)
+    console.error('[WH] sendText failed:', errMsg)
+    await notifyLucasError(
+      `⚠️ Falha ao enviar resposta para ${contact.name} (${parsed.from}):\nErro Evolution API: ${errMsg.slice(0, 200)}`
+    )
+    return
+  }
+
+  // Notifications and audit — non-critical
+  try {
+    const aiEscalated = checkAIResponseForEscalation(aiText)
     if (aiEscalated || (escalation.shouldEscalate && escalation.action === 'notify')) {
       await notifyLucasEscalation({
         contactName: contact.name,
@@ -288,22 +333,22 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
       })
     }
 
-    if (aiResult.hasDoubt) {
+    if (aiHasDoubt) {
       await notifyLucasDoubt({
         contactName: contact.name,
         contactCategory: contact.category,
         conversationId: conv.id,
-        aiResponse: aiResult.text,
+        aiResponse: aiText,
         triggeringMessage: processedContent,
       })
     }
 
     await logAudit('ai_response', 'ai', 'conversation', conv.id, {
       contact_name: contact.name,
-      tokens_in: aiResult.tokensIn,
-      tokens_out: aiResult.tokensOut,
+      tokens_in: aiTokensIn,
+      tokens_out: aiTokensOut,
       media_processed: mediaProcessed ? parsed.contentType : null,
-      had_doubt: aiResult.hasDoubt,
+      had_doubt: aiHasDoubt,
     })
   } catch (notifyErr) {
     console.error('[WH] notification/audit error (non-critical):', notifyErr)
@@ -325,4 +370,18 @@ async function logAudit(
     entity_id: entityId,
     details,
   })
+}
+
+/**
+ * Send a critical error alert directly to Lucas via WhatsApp.
+ * Fails silently — we don't want an error in error-handling to cause a loop.
+ */
+async function notifyLucasError(message: string) {
+  const lucasPhone = process.env.LUCAS_WHATSAPP_NUMBER
+  if (!lucasPhone) return
+  try {
+    await sendText({ to: lucasPhone, text: `🚨 *ERRO ANA*\n\n${message}` })
+  } catch {
+    console.error('[WH] Failed to notify Lucas about error (Evolution API unreachable)')
+  }
 }

@@ -16,8 +16,21 @@ import {
   Settings,
   ScrollText,
   X,
+  ChevronDown,
+  TrendingUp,
+  TrendingDown,
+  BarChart2,
+  Receipt,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
+
+const financialSub = [
+  { href: '/financial', label: 'Visão Geral', exact: true },
+  { href: '/financial/payables', label: 'A Pagar', icon: TrendingDown },
+  { href: '/financial/receivables', label: 'A Receber', icon: TrendingUp },
+  { href: '/financial/cashflow', label: 'Fluxo de Caixa', icon: BarChart2 },
+  { href: '/financial/dre', label: 'DRE', icon: Receipt },
+]
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: Home },
@@ -27,7 +40,7 @@ const navItems = [
   { href: '/properties', label: 'Imóveis', icon: Building2 },
   { href: '/reservations', label: 'Reservas', icon: CalendarDays },
   { href: '/knowledge-base', label: 'Base de Conhecimento', icon: BookOpen },
-  { href: '/financial', label: 'Financeiro', icon: DollarSign },
+  { href: '/financial', label: 'Financeiro', icon: DollarSign, sub: financialSub },
   { href: '/tasks', label: 'Tarefas', icon: ClipboardList },
   { href: '/templates', label: 'Templates', icon: FileText },
   { href: '/settings', label: 'Configurações', icon: Settings },
@@ -77,12 +90,13 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               const isActive =
                 pathname === item.href ||
                 (item.href !== '/' && pathname.startsWith(item.href))
+              const hasSubAndActive = item.sub && isActive
 
               return (
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    onClick={onClose}
+                    onClick={item.sub ? undefined : onClose}
                     className={cn(
                       'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                       isActive
@@ -91,8 +105,45 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     )}
                   >
                     <item.icon className="h-4 w-4 shrink-0" />
-                    {item.label}
+                    <span className="flex-1">{item.label}</span>
+                    {item.sub && (
+                      <ChevronDown
+                        className={cn(
+                          'h-3.5 w-3.5 transition-transform',
+                          hasSubAndActive ? 'rotate-0' : '-rotate-90'
+                        )}
+                      />
+                    )}
                   </Link>
+
+                  {/* Financial sub-nav */}
+                  {item.sub && hasSubAndActive && (
+                    <ul className="mt-1 ml-3 space-y-0.5 border-l border-border/60 pl-3">
+                      {item.sub.map((sub) => {
+                        const subActive = sub.exact
+                          ? pathname === sub.href
+                          : pathname.startsWith(sub.href) && sub.href !== '/financial'
+                        const SubIcon = (sub as { icon?: React.ElementType }).icon
+                        return (
+                          <li key={sub.href}>
+                            <Link
+                              href={sub.href}
+                              onClick={onClose}
+                              className={cn(
+                                'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                                subActive
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                              )}
+                            >
+                              {SubIcon && <SubIcon className="h-3.5 w-3.5 shrink-0" />}
+                              {sub.label}
+                            </Link>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
                 </li>
               )
             })}

@@ -108,15 +108,62 @@ export async function handleLucasCommand(message: string, messageId: string) {
 
 async function buildDataContext(): Promise<string> {
   const supabase = createAdminClient()
-  const today = new Date().toISOString().split('T')[0]
+  const now = new Date()
+  const today = now.toISOString().split('T')[0]
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+  const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
 
-  const [contacts, conversations, tasks] = await Promise.all([
-    supabase.from('contacts').select('id, name, category, phone').eq('is_active', true).limit(50),
-    supabase.from('conversations').select('id, contact_id, status, last_message_at, contacts(name)').eq('status', 'active').order('last_message_at', { ascending: false }).limit(10),
-    supabase.from('tasks').select('id, title, status, priority, due_date').in('status', ['pending', 'in_progress']).limit(10),
-  ])
+  const [contacts, conversations, tasks, revenue, expenses, upcomingReservations, overduePayables, overdueReceivables] =
+    await Promise.all([
+      supabase.from('contacts').select('id, name, category, phone').eq('is_active', true).limit(50),
+      supabase.from('conversations').select('id, contact_id, status, last_message_at, contacts(name)').eq('status', 'active').order('last_message_at', { ascending: false }).limit(10),
+      supabase.from('tasks').select('id, title, status, priority, due_date').in('status', ['pending', 'in_progress']).limit(10),
+      supabase.from('financial_transactions').select('amount').eq('type', 'revenue').gte('transaction_date', startOfMonth).eq('status', 'completed'),
+      supabase.from('financial_transactions').select('amount').eq('type', 'expense').gte('transaction_date', startOfMonth).eq('status', 'completed'),
+      supabase.from('reservations').select('*, properties:property_id(name)').gte('check_in', today).lte('check_in', nextWeek).in('status', ['confirmed', 'checked_in']).order('check_in'),
+      // Contas a pagar vencidas (se tabela existir)
+      supabase.from('accounts_payable').select('id, description, amount, due_date').eq('status', 'open').lt('due_date', today).limit(10),
+      supabase.from('accounts_receivable').select('id, description, amount, due_date').eq('status', 'open').lt('due_date', today).limit(10),
+    ])
 
-  let context = '\n## DADOS ATUAIS\n'
+  const totalRevenue = (revenue.data || []).reduce((s, t) => s + Number(t.amount), 0)
+  const totalExpenses = (expenses.data || []).reduce((s, t) => s + Number(t.amount), 0)
+
+  let context = '\n## DADOS ATUAIS DA EMPRESA\n'
+
+  // Resumo financeiro do mês
+  context += `\n### Financeiro — ${new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'America/Bahia' })}:\n`
+  context += `- Receita: ${formatBRL(totalRevenue)}\n`
+  context += `- Despesas: ${formatBRL(totalExpenses)}\n`
+  context += `- Resultado: ${formatBRL(totalRevenue - totalExpenses)}\n`
+
+  // Contas vencidas
+  if (!overduePayables.error && overduePayables.data && overduePayables.data.length > 0) {
+    const totalOverdue = overduePayables.data.reduce((s, t) => s + Number(t.amount), 0)
+    context += `\n### Contas a pagar VENCIDAS (${overduePayables.data.length}):\n`
+    overduePayables.data.forEach((p: Record<string, unknown>) => {
+      context += `- ${p.description} — ${formatBRL(Number(p.amount))} (venc. ${p.due_date})\n`
+    })
+    context += `Total vencido a pagar: ${formatBRL(totalOverdue)}\n`
+  }
+
+  if (!overdueReceivables.error && overdueReceivables.data && overdueReceivables.data.length > 0) {
+    const totalOverdue = overdueReceivables.data.reduce((s, t) => s + Number(t.amount), 0)
+    context += `\n### Contas a receber VENCIDAS (${overdueReceivables.data.length}):\n`
+    overdueReceivables.data.forEach((r: Record<string, unknown>) => {
+      context += `- ${r.description} — ${formatBRL(Number(r.amount))} (venc. ${r.due_date})\n`
+    })
+    context += `Total vencido a receber: ${formatBRL(totalOverdue)}\n`
+  }
+
+  // Próximos check-ins
+  if (upcomingReservations.data && upcomingReservations.data.length > 0) {
+    context += `\n### Check-ins dos próximos 7 dias:\n`
+    upcomingReservations.data.forEach((r: Record<string, unknown>) => {
+      const prop = r.properties as { name: string } | null
+      context += `- ${r.guest_name} em ${prop?.name || 'N/A'} — check-in: ${r.check_in} / check-out: ${r.check_out}\n`
+    })
+  }
 
   if (contacts.data && contacts.data.length > 0) {
     context += '\n### Contatos cadastrados (amostra):\n'

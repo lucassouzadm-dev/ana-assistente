@@ -1,49 +1,74 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState } from '@/components/shared/empty-state'
-import { DollarSign, Plus, Search, TrendingUp, TrendingDown, ArrowUpDown, BarChart3, List } from 'lucide-react'
+import { FinancialNav } from '@/components/financial/financial-nav'
+import {
+  DollarSign, Plus, Search, TrendingUp, TrendingDown, ArrowUpDown,
+  AlertCircle, Clock, CheckCircle,
+} from 'lucide-react'
 import { formatBRL } from '@/lib/utils/currency'
 import { TRANSACTION_TYPE_LABELS, PAYMENT_METHOD_LABELS } from '@/lib/utils/constants'
-import { FinancialCharts } from '@/components/financial/financial-charts'
 import type { FinancialTransaction, PaymentMethod } from '@/types/database'
+
+const today = new Date().toISOString().split('T')[0]
 
 export default function FinancialPage() {
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [view, setView] = useState<'list' | 'charts'>('list')
   const [monthFilter, setMonthFilter] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
 
-  useEffect(() => {
-    loadTransactions()
-  }, [monthFilter])
+  // C/P and C/R summaries
+  const [payablesSummary, setPayablesSummary] = useState({ open: 0, overdue: 0, paidMonth: 0 })
+  const [receivablesSummary, setReceivablesSummary] = useState({ open: 0, overdue: 0, receivedMonth: 0 })
 
-  async function loadTransactions() {
+  const load = useCallback(async () => {
     const supabase = createClient()
     const [year, month] = monthFilter.split('-').map(Number)
     const startDate = `${year}-${String(month).padStart(2, '0')}-01`
     const endDate = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`
 
-    const { data } = await supabase
-      .from('financial_transactions')
-      .select('*, category:category_id(name), property:property_id(name)')
-      .gte('transaction_date', startDate)
-      .lt('transaction_date', endDate)
-      .order('transaction_date', { ascending: false })
-    setTransactions((data as FinancialTransaction[]) || [])
+    const [txRes, apRes, arRes] = await Promise.all([
+      supabase
+        .from('financial_transactions')
+        .select('*, category:category_id(name), property:property_id(name)')
+        .gte('transaction_date', startDate)
+        .lt('transaction_date', endDate)
+        .order('transaction_date', { ascending: false }),
+      supabase.from('accounts_payable').select('amount, status, due_date').gte('due_date', startDate).lt('due_date', endDate),
+      supabase.from('accounts_receivable').select('amount, status, due_date').gte('due_date', startDate).lt('due_date', endDate),
+    ])
+
+    setTransactions((txRes.data as FinancialTransaction[]) || [])
+
+    const payables = apRes.data || []
+    setPayablesSummary({
+      open: payables.filter((p) => p.status === 'open' && p.due_date >= today).reduce((s, p) => s + Number(p.amount), 0),
+      overdue: payables.filter((p) => p.status === 'open' && p.due_date < today).reduce((s, p) => s + Number(p.amount), 0),
+      paidMonth: payables.filter((p) => p.status === 'paid').reduce((s, p) => s + Number(p.amount), 0),
+    })
+
+    const receivables = arRes.data || []
+    setReceivablesSummary({
+      open: receivables.filter((r) => r.status === 'open' && r.due_date >= today).reduce((s, r) => s + Number(r.amount), 0),
+      overdue: receivables.filter((r) => r.status === 'open' && r.due_date < today).reduce((s, r) => s + Number(r.amount), 0),
+      receivedMonth: receivables.filter((r) => r.status === 'received').reduce((s, r) => s + Number(r.amount), 0),
+    })
+
     setLoading(false)
-  }
+  }, [monthFilter])
+
+  useEffect(() => { load() }, [load])
 
   const filtered = transactions.filter((t) => {
     const matchesSearch = !search || t.description?.toLowerCase().includes(search.toLowerCase())
@@ -58,33 +83,21 @@ export default function FinancialPage() {
   if (loading) return <div className="p-6">Carregando...</div>
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-0">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Financeiro</h1>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-md border">
-            <button
-              onClick={() => setView('list')}
-              className={`flex items-center gap-1 px-3 py-2 text-sm ${view === 'list' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-            >
-              <List className="h-4 w-4" />
-              Lista
-            </button>
-            <button
-              onClick={() => setView('charts')}
-              className={`flex items-center gap-1 px-3 py-2 text-sm ${view === 'charts' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-            >
-              <BarChart3 className="h-4 w-4" />
-              Gráficos
-            </button>
-          </div>
+          <Input type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-auto" />
           <Link href="/financial/new">
             <Button><Plus className="mr-2 h-4 w-4" />Nova Transação</Button>
           </Link>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <FinancialNav />
+
+      {/* Transactions KPIs */}
+      <div className="grid gap-4 md:grid-cols-3 mb-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
@@ -120,28 +133,86 @@ export default function FinancialPage() {
         </Card>
       </div>
 
-      <div className="flex flex-col gap-4 sm:flex-row">
-        {view === 'list' && (
-          <>
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Buscar descrição..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-            </div>
-          </>
-        )}
-        <Input type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-auto" />
-        {view === 'list' && (
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-md border px-3 py-2 text-sm">
-            <option value="all">Todos</option>
-            {Object.entries(TRANSACTION_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        )}
+      {/* C/P and C/R summary */}
+      <div className="grid gap-4 md:grid-cols-2 mb-6">
+        {/* Contas a Pagar */}
+        <Link href="/financial/payables">
+          <Card className={`transition-colors hover:bg-muted/50 cursor-pointer ${payablesSummary.overdue > 0 ? 'border-red-200' : ''}`}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between">
+                Contas a Pagar
+                <span className="text-xs text-primary">Ver tudo →</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-3 gap-3">
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><Clock className="h-4 w-4 text-amber-500" /></div>
+                <p className="text-xs text-muted-foreground">Em aberto</p>
+                <p className="text-sm font-bold text-amber-700">{formatBRL(payablesSummary.open)}</p>
+              </div>
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><AlertCircle className="h-4 w-4 text-red-500" /></div>
+                <p className="text-xs text-muted-foreground">Vencidas</p>
+                <p className={`text-sm font-bold ${payablesSummary.overdue > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>
+                  {formatBRL(payablesSummary.overdue)}
+                </p>
+              </div>
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><CheckCircle className="h-4 w-4 text-green-500" /></div>
+                <p className="text-xs text-muted-foreground">Pagas</p>
+                <p className="text-sm font-bold text-green-700">{formatBRL(payablesSummary.paidMonth)}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        {/* Contas a Receber */}
+        <Link href="/financial/receivables">
+          <Card className={`transition-colors hover:bg-muted/50 cursor-pointer ${receivablesSummary.overdue > 0 ? 'border-orange-200' : ''}`}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between">
+                Contas a Receber
+                <span className="text-xs text-primary">Ver tudo →</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-3 gap-3">
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><Clock className="h-4 w-4 text-blue-500" /></div>
+                <p className="text-xs text-muted-foreground">A receber</p>
+                <p className="text-sm font-bold text-blue-700">{formatBRL(receivablesSummary.open)}</p>
+              </div>
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><AlertCircle className="h-4 w-4 text-orange-500" /></div>
+                <p className="text-xs text-muted-foreground">Vencidas</p>
+                <p className={`text-sm font-bold ${receivablesSummary.overdue > 0 ? 'text-orange-700' : 'text-muted-foreground'}`}>
+                  {formatBRL(receivablesSummary.overdue)}
+                </p>
+              </div>
+              <div className="text-center">
+                <div className="flex justify-center mb-1"><CheckCircle className="h-4 w-4 text-green-500" /></div>
+                <p className="text-xs text-muted-foreground">Recebidas</p>
+                <p className="text-sm font-bold text-green-700">{formatBRL(receivablesSummary.receivedMonth)}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
-      {view === 'charts' ? (
-        <FinancialCharts transactions={transactions as unknown as Parameters<typeof FinancialCharts>[0]['transactions']} />
-      ) : filtered.length === 0 ? (
-        <EmptyState icon={DollarSign} title="Nenhuma transação" description="Registre receitas e despesas." />
+      {/* Transaction list filters */}
+      <div className="flex flex-col gap-4 sm:flex-row mb-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Buscar descrição..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+        </div>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-md border px-3 py-2 text-sm">
+          <option value="all">Todos</option>
+          {Object.entries(TRANSACTION_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </div>
+
+      {/* Transaction list */}
+      {filtered.length === 0 ? (
+        <EmptyState icon={DollarSign} title="Nenhuma transação" description="Registre receitas e despesas para visualizar aqui." />
       ) : (
         <div className="space-y-2">
           {filtered.map((t) => (
@@ -151,7 +222,9 @@ export default function FinancialPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`flex h-8 w-8 items-center justify-center rounded-full ${t.type === 'revenue' ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {t.type === 'revenue' ? <TrendingUp className="h-4 w-4 text-green-700" /> : <TrendingDown className="h-4 w-4 text-red-700" />}
+                        {t.type === 'revenue'
+                          ? <TrendingUp className="h-4 w-4 text-green-700" />
+                          : <TrendingDown className="h-4 w-4 text-red-700" />}
                       </div>
                       <div>
                         <p className="font-medium text-sm">{t.description || (t.category as { name: string } | undefined)?.name || 'Sem descrição'}</p>

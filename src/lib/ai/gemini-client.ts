@@ -2,9 +2,14 @@ import { GoogleGenerativeAI, type GenerativeModel, type Content } from '@google/
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!)
 
+// Primary model — controlled via AI_MODEL env var.
+// Google frequently renames/versions models; update this env var on Vercel
+// when the active model name changes (e.g. gemini-2.5-flash-preview-05-20).
+const DEFAULT_MODEL = 'gemini-2.5-flash'
+
 export function getModel(modelName?: string): GenerativeModel {
   return genAI.getGenerativeModel({
-    model: modelName || process.env.AI_MODEL || 'gemini-2.5-flash',
+    model: modelName || process.env.AI_MODEL || DEFAULT_MODEL,
   })
 }
 
@@ -18,6 +23,10 @@ export async function generateResponse(
   messages: ChatMessage[],
   tools?: unknown[]
 ): Promise<{ text: string; tokensIn: number; tokensOut: number; functionCalls?: unknown[]; hasDoubt?: boolean }> {
+  if (!process.env.GOOGLE_AI_API_KEY) {
+    throw new Error('GOOGLE_AI_API_KEY is not configured — set this env var on Vercel.')
+  }
+
   const model = getModel()
 
   // Gemini requires history to start with role 'user'. If the first messages are
@@ -45,10 +54,47 @@ export async function generateResponse(
     ...(tools && tools.length > 0 ? { tools: tools as never[] } : {}),
   })
 
-  const result = await chat.sendMessage(lastMessage.content)
+  let result
+  try {
+    result = await chat.sendMessage(lastMessage.content)
+  } catch (err: unknown) {
+    // Provide richer error context for common Gemini failure modes
+    const errMsg = err instanceof Error ? err.message : String(err)
+    const model_name = process.env.AI_MODEL || DEFAULT_MODEL
+    if (errMsg.includes('404') || errMsg.includes('not found') || errMsg.toLowerCase().includes('model')) {
+      throw new Error(
+        `Gemini model "${model_name}" not found or deprecated. ` +
+        `Update the AI_MODEL env var on Vercel to a valid model name ` +
+        `(e.g. gemini-2.0-flash or gemini-2.5-flash-latest). Original: ${errMsg}`
+      )
+    }
+    if (errMsg.includes('401') || errMsg.includes('403') || errMsg.toLowerCase().includes('api key')) {
+      throw new Error(
+        `Gemini API authentication failed — check GOOGLE_AI_API_KEY on Vercel. Original: ${errMsg}`
+      )
+    }
+    if (errMsg.includes('429') || errMsg.toLowerCase().includes('quota')) {
+      throw new Error(
+        `Gemini API quota/rate limit exceeded. Original: ${errMsg}`
+      )
+    }
+    throw err
+  }
+
   const response = result.response
 
-  const text = response.text()
+  let text: string
+  try {
+    text = response.text()
+  } catch (textErr) {
+    // response.text() throws when the response was blocked by safety filters
+    const finishReason = response.candidates?.[0]?.finishReason
+    throw new Error(
+      `Gemini response blocked (finishReason: ${finishReason}). ` +
+      `Safety filters may have been triggered by the message content.`
+    )
+  }
+
   const usage = response.usageMetadata
 
   const functionCalls = response.candidates?.[0]?.content?.parts

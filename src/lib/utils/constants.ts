@@ -1,4 +1,4 @@
-import type { ContactCategory, PropertyStatus, ReservationStatus, TaskStatus, TaskPriority, ConversationStatus, KBCategory, TemplateCategory, EscalationAction, TransactionType, PaymentMethod } from '@/types/database'
+import type { ContactCategory, PropertyStatus, ReservationStatus, TaskStatus, TaskPriority, ConversationStatus, KBCategory, TemplateCategory, EscalationAction, TransactionType, PaymentMethod, AccountPayableStatus, AccountReceivableStatus, CommissionStatus } from '@/types/database'
 
 export const CONTACT_CATEGORY_LABELS: Record<ContactCategory, string> = {
   collaborator: 'Colaborador',
@@ -86,4 +86,22 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   card: 'Cartão',
   boleto: 'Boleto',
   other: 'Outro',
+}
+
+export const ACCOUNT_PAYABLE_STATUS_LABELS: Record<AccountPayableStatus, string> = {
+  open: 'Em aberto',
+  paid: 'Pago',
+  cancelled: 'Cancelado',
+}
+
+export const ACCOUNT_RECEIVABLE_STATUS_LABELS: Record<AccountReceivableStatus, string> = {
+  open: 'Em aberto',
+  received: 'Recebido',
+  cancelled: 'Cancelado',
+}
+
+export const COMMISSION_STATUS_LABELS: Record<CommissionStatus, string> = {
+  pending: 'Pendente',
+  paid: 'Pago',
+  cancelled: 'Cancelado',
 }

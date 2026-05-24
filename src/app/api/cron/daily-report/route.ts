@@ -27,11 +27,17 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const secret = searchParams.get('secret')
-
-  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Vercel Cron Jobs send Authorization: Bearer <CRON_SECRET> automatically.
+  // Query-string secrets are NOT supported (env vars are not interpolated in vercel.json paths).
+  const cronSecret = process.env.CRON_SECRET
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization')
+    // Accept both the Vercel-injected header and a manual ?secret= for local testing
+    const { searchParams } = new URL(request.url)
+    const querySecret = searchParams.get('secret')
+    if (authHeader !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   try {
