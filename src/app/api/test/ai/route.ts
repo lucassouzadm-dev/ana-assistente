@@ -121,7 +121,7 @@ async function checkWebhook(fix: boolean): Promise<CheckResult> {
     const currentUrl = current.url || ''
     const isCorrect = currentUrl === expectedUrl && current.enabled !== false
 
-    if (isCorrect) {
+    if (isCorrect && !fix) {
       return { ok: true, message: 'Webhook configured correctly', detail: `URL: ${currentUrl}` }
     }
 
@@ -133,9 +133,10 @@ async function checkWebhook(fix: boolean): Promise<CheckResult> {
       }
     }
 
+    // fix=true: always rewrite to ensure events list and all settings are correct
     const result = await setWebhook(expectedUrl)
     if (!result.ok) return { ok: false, message: 'Failed to update webhook', detail: result.error }
-    return { ok: true, message: 'Webhook corrigido com sucesso', detail: `Agora aponta para: ${expectedUrl}` }
+    return { ok: true, message: `Webhook reescrito com sucesso (era: "${currentUrl}")`, detail: `Agora aponta para: ${expectedUrl}` }
   } catch (err) {
     return { ok: false, message: 'Webhook check error', detail: String(err) }
   }
