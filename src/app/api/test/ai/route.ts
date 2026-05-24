@@ -1,17 +1,14 @@
 /**
- * GET /api/test/ai?secret=<CRON_SECRET>
+ * GET /api/test/ai
+ * Diagnostic endpoint — tests each component of the AI pipeline.
  *
- * Diagnostic endpoint — tests each component of the AI pipeline and returns a
- * detailed report.  Restricted by CRON_SECRET so it is not publicly accessible.
- *
- * Returns a JSON object with a per-component status so you can see exactly
- * which piece is failing without needing to look at Vercel logs.
+ * GET /api/test/ai?fix=webhook
+ * Also checks and auto-fixes the Evolution API webhook URL if wrong.
  */
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateResponse } from '@/lib/ai/gemini-client'
-import { sendText } from '@/lib/whatsapp/evolution-api'
-import { getInstanceStatus } from '@/lib/whatsapp/evolution-api'
+import { sendText, getInstanceStatus, getWebhook, setWebhook } from '@/lib/whatsapp/evolution-api'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,8 +20,9 @@ interface CheckResult {
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET
+  const { searchParams } = new URL(request.url)
+
   if (cronSecret) {
-    const { searchParams } = new URL(request.url)
     const authHeader = request.headers.get('authorization')
     const querySecret = searchParams.get('secret')
     if (authHeader !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
@@ -32,20 +30,14 @@ export async function GET(request: Request) {
     }
   }
 
+  const fixWebhook = searchParams.get('fix') === 'webhook'
   const results: Record<string, CheckResult> = {}
 
-  // 1. Environment variables
-  const envCheck = checkEnvVars()
-  results.env_vars = envCheck
-
-  // 2. Supabase connectivity
+  results.env_vars = checkEnvVars()
   results.supabase = await checkSupabase()
-
-  // 3. Gemini API
   results.gemini = await checkGemini()
-
-  // 4. Evolution API (WhatsApp)
   results.evolution_api = await checkEvolutionApi()
+  results.webhook = await checkWebhook(fixWebhook)
 
   const allOk = Object.values(results).every((r) => r.ok)
 
@@ -68,9 +60,7 @@ function checkEnvVars(): CheckResult {
     'LUCAS_WHATSAPP_NUMBER',
   ]
   const missing = required.filter((k) => !process.env[k])
-  if (missing.length > 0) {
-    return { ok: false, message: `Missing env vars: ${missing.join(', ')}` }
-  }
+  if (missing.length > 0) return { ok: false, message: `Missing env vars: ${missing.join(', ')}` }
   return { ok: true, message: 'All required env vars present' }
 }
 
@@ -103,31 +93,54 @@ async function checkGemini(): Promise<CheckResult> {
 }
 
 async function checkEvolutionApi(): Promise<CheckResult> {
-  if (!process.env.EVOLUTION_API_URL) {
-    return { ok: false, message: 'EVOLUTION_API_URL not configured' }
-  }
+  if (!process.env.EVOLUTION_API_URL) return { ok: false, message: 'EVOLUTION_API_URL not configured' }
   try {
     const status = await getInstanceStatus()
     if (status.error) return { ok: false, message: 'Evolution API error', detail: status.error }
     const state = status.instance?.state
-    if (state === 'open') {
-      return { ok: true, message: 'WhatsApp instance connected', detail: `state: ${state}` }
-    }
+    if (state === 'open') return { ok: true, message: 'WhatsApp instance connected', detail: `state: ${state}` }
     return {
       ok: false,
       message: `WhatsApp instance not connected (state: ${state || 'unknown'})`,
-      detail: 'Re-scan QR code in Settings → WhatsApp to reconnect.',
+      detail: 'Re-scan QR code in Settings to reconnect.',
     }
   } catch (err) {
     return { ok: false, message: 'Evolution API unreachable', detail: String(err) }
   }
 }
 
-/**
- * POST /api/test/ai
- * Sends a test WhatsApp message to Lucas to verify the full send pipeline.
- * Body: { secret: "<CRON_SECRET>" }
- */
+async function checkWebhook(fix: boolean): Promise<CheckResult> {
+  const expectedUrl = process.env.NEXT_PUBLIC_APP_URL
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/whatsapp`
+    : 'https://ana-assistente.vercel.app/api/webhooks/whatsapp'
+
+  try {
+    const current = await getWebhook()
+    if (current.error) return { ok: false, message: 'Could not read webhook config', detail: current.error }
+
+    const currentUrl = current.url || ''
+    const isCorrect = currentUrl === expectedUrl && current.enabled !== false
+
+    if (isCorrect) {
+      return { ok: true, message: 'Webhook configured correctly', detail: `URL: ${currentUrl}` }
+    }
+
+    if (!fix) {
+      return {
+        ok: false,
+        message: 'Webhook URL is wrong or disabled',
+        detail: `Current: "${currentUrl}" | Expected: "${expectedUrl}" | Acesse ?fix=webhook para corrigir`,
+      }
+    }
+
+    const result = await setWebhook(expectedUrl)
+    if (!result.ok) return { ok: false, message: 'Failed to update webhook', detail: result.error }
+    return { ok: true, message: 'Webhook corrigido com sucesso', detail: `Agora aponta para: ${expectedUrl}` }
+  } catch (err) {
+    return { ok: false, message: 'Webhook check error', detail: String(err) }
+  }
+}
+
 export async function POST(request: Request) {
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret) {
@@ -143,9 +156,7 @@ export async function POST(request: Request) {
   }
 
   const lucasPhone = process.env.LUCAS_WHATSAPP_NUMBER
-  if (!lucasPhone) {
-    return NextResponse.json({ error: 'LUCAS_WHATSAPP_NUMBER not configured' }, { status: 500 })
-  }
+  if (!lucasPhone) return NextResponse.json({ error: 'LUCAS_WHATSAPP_NUMBER not configured' }, { status: 500 })
 
   try {
     await sendText({

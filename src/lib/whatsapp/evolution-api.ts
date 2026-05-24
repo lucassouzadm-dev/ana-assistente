@@ -225,32 +225,45 @@ export async function getInstanceStatus(): Promise<{
   }
 }
 
-export async function logoutInstance() {
-  if (!EVOLUTION_API_URL) throw new Error('EVOLUTION_API_URL not configured')
-
-  const response = await fetch(
-    `${EVOLUTION_API_URL}/instance/logout/${INSTANCE_NAME}`,
-    {
-      ...fetchOpts,
-      method: 'DELETE',
-      headers: { apikey: EVOLUTION_API_KEY },
-    }
-  )
-
-  return response.json()
+export async function getWebhook(): Promise<{ url?: string; enabled?: boolean; error?: string }> {
+  if (!EVOLUTION_API_URL) return { error: 'EVOLUTION_API_URL not configured' }
+  try {
+    const endpoint = API_VERSION === 'v1'
+      ? `${EVOLUTION_API_URL}/webhook/instance/${INSTANCE_NAME}`
+      : `${EVOLUTION_API_URL}/webhook/find/${INSTANCE_NAME}`
+    const response = await fetch(endpoint, { ...fetchOpts, headers: { apikey: EVOLUTION_API_KEY } })
+    const data = await response.json()
+    // v2 returns { webhook: { url, enabled } }, v1 returns { url, enabled }
+    return data?.webhook ?? data
+  } catch (error) {
+    return { error: String(error) }
+  }
 }
-
-export async function deleteInstance() {
-  if (!EVOLUTION_API_URL) throw new Error('EVOLUTION_API_URL not configured')
-
-  const response = await fetch(
-    `${EVOLUTION_API_URL}/instance/delete/${INSTANCE_NAME}`,
-    {
-      ...fetchOpts,
-      method: 'DELETE',
-      headers: { apikey: EVOLUTION_API_KEY },
+export async function setWebhook(url: string): Promise<{ ok: boolean; error?: string }> {
+  if (!EVOLUTION_API_URL) return { ok: false, error: 'EVOLUTION_API_URL not configured' }
+  try {
+    const endpoint = API_VERSION === 'v1'
+      ? `${EVOLUTION_API_URL}/webhook/instance/${INSTANCE_NAME}`
+      : `${EVOLUTION_API_URL}/webhook/set/${INSTANCE_NAME}`
+    const body = {
+      enabled: true,
+      url,
+      webhookByEvents: false,
+      webhookBase64: true,
+      events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
     }
-  )
-
-  return response.json()
+    const response = await fetch(endpoint, {
+      ...fetchOpts,
+      method: 'POST',
+      headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      return { ok: false, error: `HTTP ${response.status}: ${text}` }
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: String(error) }
+  }
 }
