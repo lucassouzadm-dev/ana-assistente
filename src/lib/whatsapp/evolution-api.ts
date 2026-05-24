@@ -245,13 +245,15 @@ export async function setWebhook(url: string): Promise<{ ok: boolean; error?: st
     const endpoint = API_VERSION === 'v1'
       ? `${EVOLUTION_API_URL}/webhook/instance/${INSTANCE_NAME}`
       : `${EVOLUTION_API_URL}/webhook/set/${INSTANCE_NAME}`
-    const body = {
+    // v2 requires body wrapped in { "webhook": { ... } }, v1 uses flat body
+    const webhookPayload = {
       enabled: true,
       url,
       webhookByEvents: false,
       webhookBase64: true,
       events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
     }
+    const body = API_VERSION === 'v1' ? webhookPayload : { webhook: webhookPayload }
     const response = await fetch(endpoint, {
       ...fetchOpts,
       method: 'POST',
