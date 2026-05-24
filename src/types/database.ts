@@ -288,6 +288,107 @@ export interface DailyReport {
   created_at: string
 }
 
+// ─── CRM Comercial — Fase 2 ──────────────────────────────────────────────────
+
+export type LeadStage = 'new' | 'qualified' | 'proposal' | 'negotiation' | 'closed_won' | 'closed_lost'
+export type LeadOrigin = 'whatsapp' | 'email' | 'referral' | 'instagram' | 'facebook' | 'google' | 'portal' | 'direct' | 'other'
+export type ProposalStatus = 'draft' | 'sent' | 'viewed' | 'accepted' | 'rejected' | 'expired'
+export type LeadActivityType = 'note' | 'call' | 'email' | 'whatsapp' | 'visit' | 'proposal_sent' | 'stage_change' | 'other'
+export type LoyaltyTier = 'standard' | 'silver' | 'gold' | 'vip'
+
+export interface Lead {
+  id: string
+  contact_id: string | null
+  property_id: string | null
+  title: string
+  stage: LeadStage
+  origin: LeadOrigin
+  estimated_value: number | null
+  probability: number | null
+  check_in_date: string | null
+  check_out_date: string | null
+  guests_count: number | null
+  notes: string | null
+  lost_reason: string | null
+  stage_updated_at: string
+  last_activity_at: string | null
+  assigned_to: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  // joined
+  contact?: Pick<Contact, 'id' | 'name' | 'phone' | 'email' | 'category'>
+  property?: Pick<Property, 'id' | 'name' | 'city'>
+}
+
+export interface LeadActivity {
+  id: string
+  lead_id: string
+  type: LeadActivityType
+  title: string | null
+  description: string
+  occurred_at: string
+  created_by: string | null
+  created_at: string
+}
+
+export interface Proposal {
+  id: string
+  lead_id: string | null
+  contact_id: string | null
+  property_id: string | null
+  number: number
+  title: string
+  check_in_date: string | null
+  check_out_date: string | null
+  guests_count: number | null
+  nightly_rate: number | null
+  total_nights: number | null
+  subtotal: number | null
+  discount: number
+  total_value: number | null
+  includes: string[]
+  observations: string | null
+  status: ProposalStatus
+  pdf_url: string | null
+  sent_at: string | null
+  viewed_at: string | null
+  responded_at: string | null
+  valid_until: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+  // joined
+  contact?: Pick<Contact, 'id' | 'name' | 'phone'>
+  property?: Pick<Property, 'id' | 'name' | 'city'>
+}
+
+export interface GuestNps {
+  id: string
+  reservation_id: string | null
+  contact_id: string
+  property_id: string | null
+  score: number
+  comment: string | null
+  sent_at: string
+  responded_at: string | null
+  created_at: string
+}
+
+export interface LoyaltyRecord {
+  id: string
+  contact_id: string
+  total_stays: number
+  total_nights: number
+  total_spent: number
+  discount_percent: number
+  tier: LoyaltyTier
+  last_stay_at: string | null
+  next_visit_expected: string | null
+  notes: string | null
+  updated_at: string
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -309,6 +410,11 @@ export interface Database {
       accounts_payable: { Row: AccountPayable; Insert: Partial<AccountPayable> & { description: string; amount: number; due_date: string }; Update: Partial<AccountPayable> }
       accounts_receivable: { Row: AccountReceivable; Insert: Partial<AccountReceivable> & { description: string; amount: number; due_date: string }; Update: Partial<AccountReceivable> }
       commissions: { Row: Commission; Insert: Partial<Commission> & { contact_id: string; calculated_amount: number }; Update: Partial<Commission> }
+      leads: { Row: Lead; Insert: Partial<Lead> & { title: string }; Update: Partial<Lead> }
+      lead_activities: { Row: LeadActivity; Insert: Partial<LeadActivity> & { lead_id: string; description: string }; Update: Partial<LeadActivity> }
+      proposals: { Row: Proposal; Insert: Partial<Proposal> & { title: string }; Update: Partial<Proposal> }
+      guest_nps: { Row: GuestNps; Insert: Partial<GuestNps> & { contact_id: string; score: number }; Update: Partial<GuestNps> }
+      loyalty_records: { Row: LoyaltyRecord; Insert: Partial<LoyaltyRecord> & { contact_id: string }; Update: Partial<LoyaltyRecord> }
     }
   }
 }

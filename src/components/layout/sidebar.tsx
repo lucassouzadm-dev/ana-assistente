@@ -21,8 +21,17 @@ import {
   TrendingDown,
   BarChart2,
   Receipt,
+  Kanban,
+  UserCheck,
+  FileSignature,
 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
+
+const crmSub = [
+  { href: '/crm/pipeline', label: 'Pipeline', icon: Kanban, exact: true },
+  { href: '/crm/leads', label: 'Leads', icon: UserCheck },
+  { href: '/crm/proposals', label: 'Propostas', icon: FileSignature },
+]
 
 const financialSub = [
   { href: '/financial', label: 'Visão Geral', exact: true },
@@ -40,6 +49,7 @@ const navItems = [
   { href: '/properties', label: 'Imóveis', icon: Building2 },
   { href: '/reservations', label: 'Reservas', icon: CalendarDays },
   { href: '/knowledge-base', label: 'Base de Conhecimento', icon: BookOpen },
+  { href: '/crm', label: 'CRM', icon: TrendingUp, sub: crmSub },
   { href: '/financial', label: 'Financeiro', icon: DollarSign, sub: financialSub },
   { href: '/tasks', label: 'Tarefas', icon: ClipboardList },
   { href: '/templates', label: 'Templates', icon: FileText },
@@ -116,13 +126,13 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     )}
                   </Link>
 
-                  {/* Financial sub-nav */}
+                  {/* Sub-nav */}
                   {item.sub && hasSubAndActive && (
                     <ul className="mt-1 ml-3 space-y-0.5 border-l border-border/60 pl-3">
                       {item.sub.map((sub) => {
                         const subActive = sub.exact
                           ? pathname === sub.href
-                          : pathname.startsWith(sub.href) && sub.href !== '/financial'
+                          : pathname.startsWith(sub.href)
                         const SubIcon = (sub as { icon?: React.ElementType }).icon
                         return (
                           <li key={sub.href}>
