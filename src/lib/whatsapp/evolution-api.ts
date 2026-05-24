@@ -225,7 +225,7 @@ export async function getInstanceStatus(): Promise<{
   }
 }
 
-export async function getWebhook(): Promise<{ url?: string; enabled?: boolean; error?: string }> {
+export async function getWebhook(): Promise<{ url?: string; enabled?: boolean; events?: string[]; error?: string }> {
   if (!EVOLUTION_API_URL) return { error: 'EVOLUTION_API_URL not configured' }
   try {
     const endpoint = API_VERSION === 'v1'
@@ -233,7 +233,7 @@ export async function getWebhook(): Promise<{ url?: string; enabled?: boolean; e
       : `${EVOLUTION_API_URL}/webhook/find/${INSTANCE_NAME}`
     const response = await fetch(endpoint, { ...fetchOpts, headers: { apikey: EVOLUTION_API_KEY } })
     const data = await response.json()
-    // v2 returns { webhook: { url, enabled } }, v1 returns { url, enabled }
+    // v2 returns { webhook: { url, enabled, events } }, v1 returns { url, enabled, events }
     return data?.webhook ?? data
   } catch (error) {
     return { error: String(error) }

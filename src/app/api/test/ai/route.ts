@@ -114,29 +114,47 @@ async function checkWebhook(fix: boolean): Promise<CheckResult> {
     ? `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/whatsapp`
     : 'https://ana-assistente.vercel.app/api/webhooks/whatsapp'
 
+  const REQUIRED_EVENT = 'MESSAGES_UPSERT'
+
   try {
     const current = await getWebhook()
     if (current.error) return { ok: false, message: 'Could not read webhook config', detail: current.error }
 
     const currentUrl = current.url || ''
-    const isCorrect = currentUrl === expectedUrl && current.enabled !== false
+    const hasRequiredEvent = Array.isArray(current.events) && current.events.includes(REQUIRED_EVENT)
+    const isCorrect = currentUrl === expectedUrl && current.enabled !== false && hasRequiredEvent
 
     if (isCorrect && !fix) {
-      return { ok: true, message: 'Webhook configured correctly', detail: `URL: ${currentUrl}` }
+      return {
+        ok: true,
+        message: 'Webhook configured correctly',
+        detail: `URL: ${currentUrl} | events: ${(current.events || []).join(', ')}`,
+      }
     }
 
     if (!fix) {
       return {
         ok: false,
-        message: 'Webhook URL is wrong or disabled',
-        detail: `Current: "${currentUrl}" | Expected: "${expectedUrl}" | Acesse ?fix=webhook para corrigir`,
+        message: `Webhook incorreto: URL=${currentUrl === expectedUrl ? 'ok' : 'errada'}, enabled=${current.enabled}, MESSAGES_UPSERT=${hasRequiredEvent}`,
+        detail: `events atual: [${(current.events || []).join(', ')}] | Acesse ?fix=webhook para corrigir`,
       }
     }
 
     // fix=true: always rewrite to ensure events list and all settings are correct
     const result = await setWebhook(expectedUrl)
     if (!result.ok) return { ok: false, message: 'Failed to update webhook', detail: result.error }
-    return { ok: true, message: `Webhook reescrito com sucesso (era: "${currentUrl}")`, detail: `Agora aponta para: ${expectedUrl}` }
+
+    // Read back to confirm events were actually saved
+    const after = await getWebhook()
+    const savedEvents = after.events || []
+    const saved = savedEvents.includes(REQUIRED_EVENT)
+    return {
+      ok: saved,
+      message: saved
+        ? `Webhook reescrito com sucesso (era: "${currentUrl}")`
+        : `Webhook escrito mas MESSAGES_UPSERT não consta nos eventos salvos`,
+      detail: `events salvos: [${savedEvents.join(', ')}] | URL: ${expectedUrl}`,
+    }
   } catch (err) {
     return { ok: false, message: 'Webhook check error', detail: String(err) }
   }
