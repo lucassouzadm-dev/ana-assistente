@@ -301,8 +301,3 @@ export default function DrePage() {
     </div>
   )
 }
-        </CardContent>
-      </Card>
-    </div>
-  )
-}

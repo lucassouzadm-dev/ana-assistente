@@ -181,9 +181,3 @@ export default function CashflowPage() {
     </div>
   )
 }
-
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
