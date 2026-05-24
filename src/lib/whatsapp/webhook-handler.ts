@@ -91,6 +91,7 @@ export async function handleWhatsAppWebhook(payload: Record<string, unknown>) {
         phone: parsed.from,
         category: 'unknown',
         qualification_status: 'pending',
+        is_active: true,
       })
       .select()
       .single()

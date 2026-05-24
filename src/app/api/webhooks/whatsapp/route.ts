@@ -1,4 +1,4 @@
-import { NextResponse, after } from 'next/server'
+import { NextResponse } from 'next/server'
 import { handleWhatsAppWebhook } from '@/lib/whatsapp/webhook-handler'
 
 export const maxDuration = 60
@@ -17,14 +17,17 @@ export async function POST(request: Request) {
     const payload = await request.json()
     console.log('[WEBHOOK] Received event:', payload.event)
 
-    after(async () => {
-      try {
-        await handleWhatsAppWebhook(payload)
-        console.log('[WEBHOOK] Handler completed')
-      } catch (error) {
-        console.error('[WEBHOOK] Handler error:', error)
-      }
-    })
+    // Process synchronously within maxDuration = 60s.
+    // Evolution API retries on non-2xx, so we must return 200 quickly.
+    // We respond 200 first, then process — but since after() requires Vercel Pro
+    // for reliable background execution, we process inline and rely on the 60s timeout.
+    try {
+      await handleWhatsAppWebhook(payload)
+      console.log('[WEBHOOK] Handler completed')
+    } catch (error) {
+      console.error('[WEBHOOK] Handler error:', error)
+      // Still return 200 to prevent Evolution API retry loops
+    }
 
     return NextResponse.json({ status: 'ok' })
   } catch (error) {
