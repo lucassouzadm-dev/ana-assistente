@@ -225,6 +225,44 @@ export async function getInstanceStatus(): Promise<{
   }
 }
 
+export async function restartInstance(): Promise<{ ok: boolean; error?: string }> {
+  if (!EVOLUTION_API_URL) return { ok: false, error: 'EVOLUTION_API_URL not configured' }
+  try {
+    const response = await fetch(
+      `${EVOLUTION_API_URL}/instance/restart/${INSTANCE_NAME}`,
+      { ...fetchOpts, method: 'PUT', headers: apiHeaders() }
+    )
+    if (!response.ok) {
+      const text = await response.text()
+      return { ok: false, error: `HTTP ${response.status}: ${text}` }
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: String(error) }
+  }
+}
+
+export async function getRawWebhook(): Promise<Record<string, unknown>> {
+  if (!EVOLUTION_API_URL) return { error: 'EVOLUTION_API_URL not configured' }
+  try {
+    const endpoint = API_VERSION === 'v1'
+      ? `${EVOLUTION_API_URL}/webhook/instance/${INSTANCE_NAME}`
+      : `${EVOLUTION_API_URL}/webhook/find/${INSTANCE_NAME}`
+    const response = await fetch(endpoint, { ...fetchOpts, headers: { apikey: EVOLUTION_API_KEY } })
+    return response.json()
+  } catch (error) {
+    return { error: String(error) }
+  }
+}
+
+export function getEvolutionDomain(): string {
+  try {
+    return new URL(EVOLUTION_API_URL).hostname
+  } catch {
+    return EVOLUTION_API_URL
+  }
+}
+
 export async function getWebhook(): Promise<{ url?: string; enabled?: boolean; events?: string[]; error?: string }> {
   if (!EVOLUTION_API_URL) return { error: 'EVOLUTION_API_URL not configured' }
   try {

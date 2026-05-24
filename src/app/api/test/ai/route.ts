@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateResponse } from '@/lib/ai/gemini-client'
-import { sendText, getInstanceStatus, getWebhook, setWebhook } from '@/lib/whatsapp/evolution-api'
+import { sendText, getInstanceStatus, getWebhook, setWebhook, getRawWebhook, restartInstance, getEvolutionDomain } from '@/lib/whatsapp/evolution-api'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,13 +31,22 @@ export async function GET(request: Request) {
   }
 
   const fixWebhook = searchParams.get('fix') === 'webhook'
+  const fixRestart = searchParams.get('fix') === 'restart'
   const results: Record<string, CheckResult> = {}
 
   results.env_vars = checkEnvVars()
   results.supabase = await checkSupabase()
   results.gemini = await checkGemini()
   results.evolution_api = await checkEvolutionApi()
-  results.webhook = await checkWebhook(fixWebhook)
+  results.webhook = await checkWebhook(fixWebhook || fixRestart)
+
+  let restartResult: { ok: boolean; error?: string } | null = null
+  if (fixRestart) {
+    restartResult = await restartInstance()
+  }
+
+  // Always include raw webhook config for full visibility
+  const rawWebhook = await getRawWebhook()
 
   const allOk = Object.values(results).every((r) => r.ok)
 
@@ -45,7 +54,10 @@ export async function GET(request: Request) {
     status: allOk ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     model: process.env.AI_MODEL || 'gemini-2.5-flash (default)',
+    evolution_domain: getEvolutionDomain(),
     checks: results,
+    raw_webhook: rawWebhook,
+    ...(restartResult !== null ? { restart: restartResult } : {}),
   }, { status: allOk ? 200 : 500 })
 }
 
