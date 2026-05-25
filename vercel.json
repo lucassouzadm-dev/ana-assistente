@@ -3,10 +3,6 @@
     {
       "path": "/api/cron/daily-report",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/evolution-health",
-      "schedule": "*/30 * * * *"
     }
   ]
 }
